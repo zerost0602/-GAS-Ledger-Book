@@ -1,0 +1,74 @@
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('index')
+      .setTitle('DoubleBook - GAS 통합 가계부')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function getSheet(name) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    if (name === 'Transactions') {
+      sheet.appendRow(['id', 'date', 'debits', 'credits', 'memo']);
+    } else if (name === 'Settings') {
+      sheet.appendRow(['key', 'value']);
+    }
+  }
+  return sheet;
+}
+
+function getAllData() {
+  const settingsSheet = getSheet('Settings');
+  const transSheet = getSheet('Transactions');
+  const settingsRaw = settingsSheet.getDataRange().getValues();
+  const transRaw = transSheet.getDataRange().getValues();
+  
+  let initialSetup = { debits: [{ account: '현금', amount: 0 }], credits: [] };
+  let accounts = {
+    assets: [{ id: 'a1', name: '현금', subtype: 'fixed' }],
+    liabilities: [{ id: 'l1', name: '신용카드', subtype: 'variable' }, { id: 'e1', name: '이익잉여금', subtype: 'fixed' }],
+    revenue: [{ id: 'r1', name: '급여', subtype: 'fixed' }],
+    expenses: [{ id: 'x1', name: '식비', subtype: 'variable' }]
+  };
+  
+  settingsRaw.forEach(row => {
+    if (row[0] === 'initialSetup') initialSetup = JSON.parse(row[1]);
+    if (row[0] === 'accounts') accounts = JSON.parse(row[1]);
+  });
+  
+  const transactions = [];
+  if (transRaw.length > 1) {
+    for (let i = 1; i < transRaw.length; i++) {
+      try {
+        transactions.push({
+          id: String(transRaw[i][0]),
+          date: transRaw[i][1] instanceof Date ? transRaw[i][1].toISOString().split('T')[0] : transRaw[i][1],
+          debits: JSON.parse(transRaw[i][2]),
+          credits: JSON.parse(transRaw[i][3]),
+          memo: transRaw[i][4]
+        });
+      } catch (e) { console.error("Data parse error", e); }
+    }
+  }
+  return { initialSetup, accounts, transactions };
+}
+
+function syncAllDataToSheet(data) {
+  const { initialSetup, accounts, transactions } = data;
+  
+  const settingsSheet = getSheet('Settings');
+  settingsSheet.clear();
+  settingsSheet.appendRow(['key', 'value']);
+  settingsSheet.appendRow(['initialSetup', JSON.stringify(initialSetup)]);
+  settingsSheet.appendRow(['accounts', JSON.stringify(accounts)]);
+  
+  const transSheet = getSheet('Transactions');
+  transSheet.clear();
+  transSheet.appendRow(['id', 'date', 'debits', 'credits', 'memo']);
+  transactions.forEach(t => {
+    transSheet.appendRow([t.id, t.date, JSON.stringify(t.debits), JSON.stringify(t.credits), t.memo]);
+  });
+  return true;
+}
