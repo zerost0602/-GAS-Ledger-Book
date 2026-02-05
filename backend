@@ -58,17 +58,43 @@ function getAllData() {
 function syncAllDataToSheet(data) {
   const { initialSetup, accounts, transactions } = data;
   
+  // 1. Settings 시트 일괄 저장
   const settingsSheet = getSheet('Settings');
   settingsSheet.clear();
-  settingsSheet.appendRow(['key', 'value']);
-  settingsSheet.appendRow(['initialSetup', JSON.stringify(initialSetup)]);
-  settingsSheet.appendRow(['accounts', JSON.stringify(accounts)]);
   
+  // 2차원 배열로 데이터 준비
+  const settingsData = [
+    ['key', 'value'], // 헤더
+    ['initialSetup', JSON.stringify(initialSetup)],
+    ['accounts', JSON.stringify(accounts)]
+  ];
+  
+  // setValues로 한 번에 입력
+  settingsSheet.getRange(1, 1, settingsData.length, settingsData[0].length).setValues(settingsData);
+  
+  // 2. Transactions 시트 일괄 저장 (여기가 핵심 성능 개선 구간)
   const transSheet = getSheet('Transactions');
   transSheet.clear();
-  transSheet.appendRow(['id', 'date', 'debits', 'credits', 'memo']);
-  transactions.forEach(t => {
-    transSheet.appendRow([t.id, t.date, JSON.stringify(t.debits), JSON.stringify(t.credits), t.memo]);
-  });
+  
+  // 헤더 준비
+  const header = ['id', 'date', 'debits', 'credits', 'memo'];
+  
+  // 거래내역이 있을 경우 map을 통해 2차원 배열로 변환
+  let transData = [header]; // 헤더 포함
+  
+  if (transactions && transactions.length > 0) {
+    const bodyRows = transactions.map(t => [
+      t.id, 
+      t.date, 
+      JSON.stringify(t.debits), 
+      JSON.stringify(t.credits), 
+      t.memo
+    ]);
+    transData = transData.concat(bodyRows);
+  }
+  
+  // 단 한 번의 API 호출로 모든 데이터 쓰기
+  transSheet.getRange(1, 1, transData.length, transData[0].length).setValues(transData);
+  
   return true;
 }
