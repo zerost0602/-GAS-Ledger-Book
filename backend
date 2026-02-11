@@ -44,7 +44,7 @@ function getAllData() {
       try {
         transactions.push({
           id: String(transRaw[i][0]),
-          date: transRaw[i][1] instanceof Date ? transRaw[i][1].toISOString().split('T')[0] : transRaw[i][1],
+          date: transRaw[i][1] instanceof Date ? Utilities.formatDate(transRaw[i][1], Session.getScriptTimeZone(), 'yyyy-MM-dd') : transRaw[i][1],
           debits: JSON.parse(transRaw[i][2]),
           credits: JSON.parse(transRaw[i][3]),
           memo: transRaw[i][4]
