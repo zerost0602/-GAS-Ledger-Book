@@ -495,8 +495,8 @@ return (
 
 {currentView === 'GL' && (
 <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-6 text-slate-800 pb-10">
-{Object.entries(accounts).map(([cat, list]) => (
-<div key={cat} className="bg-white p-4 sm:p-6 rounded-2xl border shadow-sm h-fit"><h3 className="text-[10px] sm:text-xs font-black uppercase text-slate-400 mb-3 text-center tracking-widest">{cat.toUpperCase()} Accounts</h3><div className="space-y-1.5">{(list || []).map(a => (<div key={a.id} className="flex justify-between p-3 bg-slate-50 rounded-xl border border-transparent font-bold"><span className="text-xs sm:text-base">{a.name}</span><span className="font-mono text-sm sm:text-base">{(cat==='liabilities'||cat==='revenue' ? Math.abs(accountBalances[a.name] || 0) : accountBalances[a.name] || 0).toLocaleString()}원</span></div>))}</div></div>
+{['assets', 'liabilities', 'revenue', 'expenses'].map(cat => (
+<div key={cat} className="bg-white p-4 sm:p-6 rounded-2xl border shadow-sm h-fit"><h3 className="text-[10px] sm:text-xs font-black uppercase text-slate-400 mb-3 text-center tracking-widest">{cat.toUpperCase()} Accounts</h3><div className="space-y-1.5">{(accounts[cat] || []).map(a => (<div key={a.id} className="flex justify-between p-3 bg-slate-50 rounded-xl border border-transparent font-bold"><span className="text-xs sm:text-base">{a.name}</span><span className="font-mono text-sm sm:text-base">{(cat==='liabilities'||cat==='revenue' ? Math.abs(accountBalances[a.name] || 0) : accountBalances[a.name] || 0).toLocaleString()}원</span></div>))}</div></div>
 ))}
 </div>
 )}
