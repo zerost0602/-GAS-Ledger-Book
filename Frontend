@@ -1,675 +1,379 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>DoubleBook - GAS N:M 멀티 전표</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://unpkg.com/lucide@latest"></script>
-<style>
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-input[type="number"] { -moz-appearance: textfield; }
-.loading-overlay { background: rgba(255, 255, 255, 0.9); position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; flex-direction: column; }
-.modal-scroll::-webkit-scrollbar { width: 4px; }
-.modal-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
-.sidebar-transition { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-/* 모바일 터치 최적화 */
-button, input, select { touch-action: manipulation; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>DoubleBook - GAS 통합 가계부</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type="number"] { -moz-appearance: textfield; }
+    .loading-overlay { background: rgba(255, 255, 255, 0.9); position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+  </style>
 </head>
-<body class="bg-slate-50 text-slate-900 overflow-x-hidden font-sans">
-<div id="root"></div>
+<body class="bg-slate-100 text-slate-800 font-sans">
+  <div id="root"></div>
 
-<script type="text/babel">
-const { useState, useEffect, useMemo } = React;
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
 
-const TrashIcon = () => (
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-);
+    // --- 통신 모듈 (GAS & 로컬 Mock Data) ---
+    const server = {
+      getAllData: () => new Promise(resolve => {
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler(resolve).getAllData();
+        } else {
+          // Canvas 미리보기를 위한 초기 Mock 데이터
+          resolve({
+            accounts: {
+              expenses: [
+                { id: 'e1', name: '식비' }, { id: 'e2', name: '교통비' }, 
+                { id: 'e3', name: '문화생활비' }, { id: 'e4', name: '교육비' }
+              ]
+            },
+            transactions: [
+              { id: 't1', date: '2026-03-05', debits: [{ account: '교육비', amount: 15540 }], credits: [], memo: '책 스캔비용' },
+              { id: 't2', date: '2026-03-07', debits: [{ account: '문화생활비', amount: 19000 }], credits: [], memo: '스팀 게임 구입' },
+              { id: 't3', date: '2026-03-15', debits: [{ account: '식비', amount: 44200 }], credits: [], memo: '하늘초밥 데이트' },
+              { id: 't4', date: '2026-03-18', debits: [{ account: '교통비', amount: 3000 }], credits: [], memo: '주차비 정산' }
+            ],
+            budgets: [
+              { id: 'b1', yearMonth: '2026-03', account: '식비', content: '데이트 및 외식', amount: 300000 },
+              { id: 'b2', yearMonth: '2026-03', account: '교육비', content: '도서 구입', amount: 50000 }
+            ]
+          });
+        }
+      }),
+      saveBudgetData: (yearMonth, currentMonthBudgets) => new Promise((resolve, reject) => {
+        if (typeof google !== 'undefined' && google.script) {
+          google.script.run.withSuccessHandler(resolve).withFailureHandler(reject).saveBudgetData(yearMonth, currentMonthBudgets);
+        } else {
+          setTimeout(() => resolve(true), 500); // Mock delay
+        }
+      })
+    };
 
-const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-md", zIndex = "z-50" }) => {
-if (!isOpen) return null;
-return (
-<div className={`fixed inset-0 ${zIndex} flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200`}>
-<div className={`bg-white rounded-t-3xl sm:rounded-3xl w-full ${maxWidth} overflow-hidden shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[95vh]`}>
-<div className="flex justify-between items-center p-4 sm:p-5 border-b bg-slate-50 shrink-0">
-<h3 className="text-sm sm:text-lg font-bold text-slate-800">{title}</h3>
-<button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400">
-<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-</button>
-</div>
-<div className="p-4 sm:p-6 overflow-y-auto modal-scroll bg-white text-slate-800">{children}</div>
-</div>
-</div>
-);
-};
+    // --- 예산내역 (Budget) 컴포넌트 ---
+    const BudgetPage = ({ accounts, transactions, budgets, onSave }) => {
+      // 1. 연/월 상태 (기본값: 2026년 3월)
+      const [targetMonth, setTargetMonth] = useState('2026-03');
+      const [localBudgets, setLocalBudgets] = useState([]);
+      const [expandedAccounts, setExpandedAccounts] = useState({});
+      const [isSaving, setIsSaving] = useState(false);
 
-const AccountGridPicker = ({ accounts, onPick }) => {
-const categories = [
-{ key: 'assets', label: '자산', color: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' },
-{ key: 'liabilities', label: '부채', color: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100' },
-{ key: 'revenue', label: '수익', color: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' },
-{ key: 'expenses', label: '비용', color: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100' }
-];
-return (
-<div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300 pb-10">
-{categories.map(cat => (
-<div key={cat.key}>
-<h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 ml-1">{cat.label}</h4>
-<div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-{(accounts[cat.key] || []).filter(a => a.name !== '이익잉여금').map(a => (
-<button key={a.id} onClick={() => onPick(a.name)} className={`p-3 rounded-xl border text-xs font-bold transition-all active:scale-95 hover:shadow-md ${cat.color}`}>{a.name}</button>
-))}
-{cat.key === 'liabilities' && (
-<button onClick={() => onPick('결산(임시)')} className="p-3 rounded-xl border text-xs font-bold bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100 transition-colors">결산(임시)</button>
-)}
-</div>
-</div>
-))}
-</div>
-);
-};
+      // 계정과목 목록 (Expense 전용)
+      const expenseAccounts = accounts?.expenses?.map(e => e.name) || [];
 
-const App = () => {
-const [isLoading, setIsLoading] = useState(true);
-const [isDirty, setIsDirty] = useState(false);
-const [currentView, setCurrentView] = useState('BS');
-const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 1024);
-const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-const [settingsTab, setSettingsTab] = useState('equity');
-const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
-const [editingTransaction, setEditingTransaction] = useState(null);
+      // targetMonth 변경 시 해당 월 예산 불러오기
+      useEffect(() => {
+        const monthBudgets = budgets.filter(b => b.yearMonth === targetMonth);
+        setLocalBudgets(monthBudgets);
+        setExpandedAccounts({}); // 월 변경시 아코디언 닫기
+      }, [targetMonth, budgets]);
 
-const [statusMessage, setStatusMessage] = useState(null);
-const [confirmDialog, setConfirmDialog] = useState(null);
-const [activePicker, setActivePicker] = useState(null);
+      // --- 예산 입력 핸들러 ---
+      const handleAddRow = () => {
+        setLocalBudgets([...localBudgets, { id: '', yearMonth: targetMonth, account: expenseAccounts[0] || '', content: '', amount: 0 }]);
+      };
+      const handleRemoveRow = (index) => {
+        setLocalBudgets(localBudgets.filter((_, i) => i !== index));
+      };
+      const handleChangeRow = (index, field, value) => {
+        const newB = [...localBudgets];
+        newB[index][field] = field === 'amount' ? (Number(value) || 0) : value;
+        setLocalBudgets(newB);
+      };
 
-const [standardDate, setStandardDate] = useState(new Date().toISOString().split('T')[0]);
-const [editRange, setEditRange] = useState({
-start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-end: new Date().toISOString().split('T')[0]
-});
+      const handleSave = async () => {
+        setIsSaving(true);
+        try {
+          await server.saveBudgetData(targetMonth, localBudgets);
+          alert('예산내역이 저장되었습니다.');
+          onSave(); // 부모 컴포넌트 데이터 갱신
+        } catch(e) {
+          alert('저장 실패');
+        }
+        setIsSaving(false);
+      };
 
-const [initialSetup, setInitialSetup] = useState({ debits: [{ account: '현금', amount: 0 }], credits: [] });
-const [accounts, setAccounts] = useState({
-assets: [{ id: 'a1', name: '현금', subtype: 'fixed' }],
-liabilities: [{ id: 'l1', name: '신용카드', subtype: 'variable' }, { id: 'e1', name: '이익잉여금', subtype: 'fixed' }],
-revenue: [{ id: 'r1', name: '급여', subtype: 'fixed' }],
-expenses: [{ id: 'x1', name: '식비', subtype: 'variable' }]
-});
-const [transactions, setTransactions] = useState([]);
+      // --- 실제 지출내역(Actuals) 계산 ---
+      const actualsByAccount = useMemo(() => {
+        const monthlyTx = transactions.filter(t => t.date.startsWith(targetMonth));
+        let map = {};
+        
+        monthlyTx.forEach(tx => {
+          // 차변(Debits)에 비용 계정이 있으면 지출 증가
+          (tx.debits || []).forEach(d => {
+            if (expenseAccounts.includes(d.account)) {
+              if (!map[d.account]) map[d.account] = [];
+              map[d.account].push({ date: tx.date, memo: tx.memo, amount: d.amount });
+            }
+          });
+          // 대변(Credits)에 비용 계정이 있으면 지출 취소(마이너스)
+          (tx.credits || []).forEach(c => {
+            if (expenseAccounts.includes(c.account)) {
+              if (!map[c.account]) map[c.account] = [];
+              map[c.account].push({ date: tx.date, memo: tx.memo, amount: -c.amount });
+            }
+          });
+        });
 
-const [entryRows, setEntryRows] = useState({
-date: new Date().toISOString().split('T')[0],
-debits: [{ account: '', amount: 0 }],
-credits: [{ account: '', amount: 0 }],
-memo: ''
-});
+        // 날짜 오름차순 정렬 (초일 -> 말일)
+        Object.keys(map).forEach(acc => {
+          map[acc].sort((a, b) => a.date.localeCompare(b.date));
+        });
 
-const [addingToCategory, setAddingToCategory] = useState(null);
-const [draggedAccountId, setDraggedAccountId] = useState(null);
+        return map;
+      }, [transactions, targetMonth, expenseAccounts]);
 
-useEffect(() => {
-const init = async () => {
-if (typeof google !== 'undefined') {
-google.script.run.withSuccessHandler((data) => {
-if (data.initialSetup) setInitialSetup(data.initialSetup);
-if (data.accounts) setAccounts(data.accounts);
-if (data.transactions) setTransactions(data.transactions);
-setIsLoading(false);
-setIsDirty(false);
-lucide.createIcons();
-}).getAllData();
-} else {
-setIsLoading(false);
-setTimeout(() => lucide.createIcons(), 100);
-}
-};
-init();
-}, []);
+      const toggleAccordion = (accountName) => {
+        setExpandedAccounts(prev => ({ ...prev, [accountName]: !prev[accountName] }));
+      };
 
-useEffect(() => { if (statusMessage) { const t = setTimeout(() => setStatusMessage(null), 3000); return () => clearTimeout(t); } }, [statusMessage]);
-useEffect(() => { lucide.createIcons(); });
+      // --- 화면 렌더링을 위한 계정 리스트업 (예산이 있거나 지출이 있는 계정) ---
+      const combinedAccountNames = Array.from(new Set([
+        ...localBudgets.map(b => b.account),
+        ...Object.keys(actualsByAccount)
+      ])).sort();
 
-const setupTotalDebits = useMemo(() => (initialSetup.debits || []).reduce((s, d) => s + Number(d.amount || 0), 0), [initialSetup.debits]);
-const setupTotalOtherCredits = useMemo(() => (initialSetup.credits || []).reduce((s, c) => s + Number(c.amount || 0), 0), [initialSetup.credits]);
-const calculatedInitialCapital = useMemo(() => setupTotalDebits - setupTotalOtherCredits, [setupTotalDebits, setupTotalOtherCredits]);
+      let totalGlobalBudget = 0;
+      let totalGlobalActual = 0;
 
-const yearStartDate = useMemo(() => `${standardDate.split('-')[0]}-01-01`, [standardDate]);
-const allBsTransactions = useMemo(() => transactions.filter(t => t.date <= standardDate), [transactions, standardDate]);
+      return (
+        <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
+          {/* 상단 컨트롤: 연/월 선택 */}
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
+            <h2 className="text-xl font-bold text-slate-800">예산 및 지출 관리</h2>
+            <input 
+              type="month" 
+              value={targetMonth} 
+              onChange={(e) => setTargetMonth(e.target.value)}
+              className="px-4 py-2 bg-slate-100 rounded-xl font-bold border-none outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
 
-// 손익계산서용 (기존에는 결산전표를 제외했으나, '결산 시 0원 처리'를 위해 포함하도록 수정)
-const performanceTransactions = useMemo(() => transactions.filter(t => t.date >= yearStartDate && t.date <= standardDate), [transactions, yearStartDate, standardDate]);
+          {/* 예산 내역 입력 폼 */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-slate-700">이번 달 예산 설정</h3>
+              <button onClick={handleAddRow} className="flex items-center gap-1 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-semibold transition">
+                <i data-lucide="plus" className="w-4 h-4"></i> 행 추가
+              </button>
+            </div>
 
-const accountBalances = useMemo(() => {
-const balances = {};
-Object.values(accounts).flat().forEach(a => balances[a.name] = 0);
-balances['결산(임시)'] = 0;
-(initialSetup.debits || []).forEach(d => { if (d.account) { balances[d.account] = (balances[d.account] || 0) + Number(d.amount || 0); } });
-(initialSetup.credits || []).forEach(c => { if (c.account) { balances[c.account] = (balances[c.account] || 0) - Number(c.amount || 0); } });
-allBsTransactions.forEach(t => {
-t.debits.forEach(d => { balances[d.account] = (balances[d.account] || 0) + Number(d.amount || 0); });
-t.credits.forEach(c => { balances[c.account] = (balances[c.account] || 0) - Number(c.amount || 0); });
-});
-return balances;
-}, [allBsTransactions, accounts, initialSetup]);
+            <div className="space-y-2">
+              {localBudgets.length === 0 && <p className="text-slate-400 text-sm text-center py-4">설정된 예산이 없습니다.</p>}
+              {localBudgets.map((budget, i) => (
+                <div key={i} className="flex flex-wrap sm:flex-nowrap gap-2 items-center">
+                  <select 
+                    value={budget.account} 
+                    onChange={e => handleChangeRow(i, 'account', e.target.value)}
+                    className="flex-1 sm:w-1/4 p-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-indigo-500 text-sm font-medium"
+                  >
+                    <option value="">계정 선택</option>
+                    {expenseAccounts.map(acc => <option key={acc} value={acc}>{acc}</option>)}
+                  </select>
+                  <input 
+                    type="text" 
+                    placeholder="예산 내용" 
+                    value={budget.content} 
+                    onChange={e => handleChangeRow(i, 'content', e.target.value)}
+                    className="flex-1 sm:w-2/4 p-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-indigo-500 text-sm"
+                  />
+                  <input 
+                    type="number" 
+                    placeholder="금액" 
+                    value={budget.amount || ''} 
+                    onChange={e => handleChangeRow(i, 'amount', e.target.value)}
+                    className="flex-1 sm:w-1/4 p-2 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-indigo-500 text-sm font-bold text-right"
+                  />
+                  <button onClick={() => handleRemoveRow(i)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
+                    <i data-lucide="trash-2" className="w-5 h-5"></i>
+                  </button>
+                </div>
+              ))}
+            </div>
 
-const revenueHierarchy = useMemo(() => {
-const subtypes = ['fixed', 'variable'];
-const groups = subtypes.map(st => {
-const accs = accounts.revenue.filter(a => (a.subtype || 'fixed') === st).map(acc => {
-let amt = 0;
-performanceTransactions.forEach(t => { t.credits.forEach(c => { if(c.account === acc.name) amt += Number(c.amount); }); t.debits.forEach(d => { if(d.account === acc.name) amt -= Number(d.amount); }); });
-return { name: acc.name, amount: amt };
-}).filter(a => a.amount !== 0);
-return { label: st === 'fixed' ? '고정 항목' : '변동 항목', subtotal: accs.reduce((s, a) => s + a.amount, 0), accounts: accs };
-});
-return { total: groups.reduce((s, g) => s + g.subtotal, 0), groups };
-}, [performanceTransactions, accounts]);
+            <div className="mt-4 flex justify-end">
+              <button 
+                onClick={handleSave} 
+                disabled={isSaving}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white px-5 py-2.5 rounded-xl font-bold transition shadow-md active:scale-95"
+              >
+                <i data-lucide="save" className="w-4 h-4"></i>
+                {isSaving ? '저장 중...' : '예산내역 저장'}
+              </button>
+            </div>
+          </div>
 
-const expensesHierarchy = useMemo(() => {
-const subtypes = ['fixed', 'variable'];
-const groups = subtypes.map(st => {
-const accs = accounts.expenses.filter(a => (a.subtype || 'fixed') === st).map(acc => {
-let amt = 0;
-performanceTransactions.forEach(t => { t.debits.forEach(d => { if(d.account === acc.name) amt += Number(d.amount); }); t.credits.forEach(c => { if(c.account === acc.name) amt -= Number(c.amount); }); });
-return { name: acc.name, amount: amt };
-}).filter(a => a.amount !== 0);
-return { label: st === 'fixed' ? '고정 항목' : '변동 항목', subtotal: accs.reduce((s, a) => s + a.amount, 0), accounts: accs };
-});
-return { total: groups.reduce((s, g) => s + g.subtotal, 0), groups };
-}, [performanceTransactions, accounts]);
+          {/* 실제 지출 내역 표시 (아코디언 형태) */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+            <h3 className="text-lg font-bold text-slate-700 mb-2">예산 대비 지출내역 비교</h3>
+            
+            {combinedAccountNames.length === 0 && <p className="text-slate-400 text-sm text-center py-8">해당 월의 예산 및 지출 데이터가 없습니다.</p>}
 
-const reportNetIncome = useMemo(() => revenueHierarchy.total - expensesHierarchy.total, [revenueHierarchy, expensesHierarchy]);
+            <div className="space-y-3">
+              {combinedAccountNames.map(account => {
+                const totalBudget = localBudgets.filter(b => b.account === account).reduce((sum, b) => sum + b.amount, 0);
+                const actualLines = actualsByAccount[account] || [];
+                const totalActual = actualLines.reduce((sum, line) => sum + line.amount, 0);
+                const remaining = totalBudget - totalActual;
+                
+                totalGlobalBudget += totalBudget;
+                totalGlobalActual += totalActual;
+                
+                const isExpanded = !!expandedAccounts[account];
 
-const unsettledNetIncome = useMemo(() => {
-const revBal = accounts.revenue.reduce((sum, acc) => {
-    const bal = accountBalances[acc.name] || 0;
-    return sum + (bal < 0 ? Math.abs(bal) : -bal);
-}, 0);
-const expBal = accounts.expenses.reduce((sum, acc) => {
-    const bal = accountBalances[acc.name] || 0;
-    return sum + (bal > 0 ? bal : -Math.abs(bal));
-}, 0);
-return revBal - expBal;
-}, [accountBalances, accounts]);
+                return (
+                  <div key={account} className="border border-slate-200 rounded-xl overflow-hidden transition-all shadow-sm">
+                    {/* 아코디언 헤더 */}
+                    <div 
+                      onClick={() => toggleAccordion(account)}
+                      className="flex flex-wrap sm:flex-nowrap justify-between items-center p-3 sm:p-4 bg-slate-50 hover:bg-slate-100 cursor-pointer transition select-none"
+                    >
+                      <div className="flex items-center gap-3 w-full sm:w-auto mb-2 sm:mb-0">
+                        <span className="font-extrabold text-slate-800">{account}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${remaining < 0 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                          {remaining < 0 ? '예산 초과' : '안정적'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4 sm:gap-6 text-sm flex-1 sm:flex-none justify-between sm:justify-end">
+                        <div className="text-right">
+                          <p className="text-slate-400 text-[10px] font-bold uppercase">예산</p>
+                          <p className="font-semibold text-slate-600">{totalBudget.toLocaleString()}원</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-slate-400 text-[10px] font-bold uppercase">지출액</p>
+                          <p className="font-bold text-slate-800">{totalActual.toLocaleString()}원</p>
+                        </div>
+                        <div className="w-8 flex justify-end text-slate-400">
+                          {isExpanded ? <i data-lucide="chevron-up"></i> : <i data-lucide="chevron-down"></i>}
+                        </div>
+                      </div>
+                    </div>
 
-const totalAssets = accounts.assets.reduce((sum, acc) => sum + (accountBalances[acc.name] || 0), 0);
-const totalLiabilitiesOnly = accounts.liabilities.filter(a => a.name !== '이익잉여금').reduce((sum, acc) => sum + Math.abs(accountBalances[acc.name] || 0), 0);
-const retainedEarningsBalance = Math.abs(accountBalances['이익잉여금'] || 0);
-const currentEquity = calculatedInitialCapital + (accountBalances['이익잉여금'] < 0 ? Math.abs(accountBalances['이익잉여금']) : -accountBalances['이익잉여금']) + unsettledNetIncome;
+                    {/* 아코디언 바디 (상세 내역 - 왼쪽부터: 과목(생략/상단표기), 날짜, 내역, 금액 순) */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-200 bg-white">
+                        {actualLines.length > 0 ? (
+                          <div className="p-3">
+                            <table className="w-full text-left text-sm">
+                              <thead className="text-slate-400 text-xs border-b border-slate-100">
+                                <tr>
+                                  <th className="py-2 w-28">날짜</th>
+                                  <th className="py-2">거래내역</th>
+                                  <th className="py-2 text-right w-32">금액</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {actualLines.map((line, idx) => (
+                                  <tr key={idx} className="hover:bg-slate-50 transition">
+                                    <td className="py-2.5 text-slate-500">{line.date}</td>
+                                    <td className="py-2.5 text-slate-700 font-medium">{line.memo || '내역 없음'}</td>
+                                    <td className="py-2.5 text-right font-semibold text-slate-800">{line.amount.toLocaleString()}원</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <div className="p-4 text-center text-sm text-slate-400">이번 달 해당 계정의 지출 내역이 없습니다.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
-const totalDebitSum = useMemo(() => (entryRows.debits || []).reduce((s, r) => s + Number(r.amount || 0), 0), [entryRows.debits]);
-const totalCreditSum = useMemo(() => (entryRows.credits || []).reduce((s, r) => s + Number(r.amount || 0), 0), [entryRows.credits]);
+            {/* 최하단 총합 표기 */}
+            <div className="mt-6 pt-5 border-t-2 border-slate-200 flex justify-between items-center bg-indigo-50 p-4 rounded-xl">
+              <h3 className="text-lg font-black text-indigo-900">모든 예산 및 지출 합계</h3>
+              <div className="flex gap-6 text-right">
+                <div>
+                  <p className="text-indigo-400 text-xs font-bold">총 예산</p>
+                  <p className="font-bold text-indigo-800">{totalGlobalBudget.toLocaleString()}원</p>
+                </div>
+                <div>
+                  <p className="text-indigo-400 text-xs font-bold">총 지출액</p>
+                  <p className="text-xl font-black text-indigo-600">{totalGlobalActual.toLocaleString()}원</p>
+                </div>
+              </div>
+            </div>
 
-const handleSync = () => {
-setIsLoading(true);
-if (typeof google !== 'undefined') {
-google.script.run.withSuccessHandler(() => {
-setIsLoading(false); setIsDirty(false); setStatusMessage({ type: 'success', text: '클라우드 저장 완료' });
-}).syncAllDataToSheet({ initialSetup, accounts, transactions });
-}
-};
+          </div>
+        </div>
+      );
+    };
 
-const handleAddAccount = (category, name) => {
-if (!name.trim()) return;
-setAccounts(prev => ({ ...prev, [category]: [...prev[category], { id: Date.now().toString(), name: name.trim(), subtype: 'fixed' }] }));
-setIsDirty(true); setAddingToCategory(null);
-};
+    // --- Main App ---
+    const App = () => {
+      const [loading, setLoading] = useState(true);
+      const [data, setData] = useState(null);
+      const [activeTab, setActiveTab] = useState('budget'); // 초기 탭을 예산내역으로 설정
 
-const handleUpdateAccountName = (category, id, name) => {
-setAccounts(prev => ({ ...prev, [category]: prev[category].map(a => String(a.id) === String(id) ? { ...a, name: name.trim() } : a) }));
-setIsDirty(true);
-};
+      const loadData = async () => {
+        setLoading(true);
+        const fetchedData = await server.getAllData();
+        setData(fetchedData);
+        setLoading(false);
+        setTimeout(() => lucide.createIcons(), 100);
+      };
 
-const handleDeleteAccount = (category, id) => {
-setConfirmDialog({
-title: '삭제 확인',
-message: '해당 계정과목을 삭제하시겠습니까?',
-onConfirm: () => {
-setAccounts(prev => ({ ...prev, [category]: prev[category].filter(a => String(a.id) !== String(id)) }));
-setIsDirty(true); setConfirmDialog(null);
-}
-});
-};
+      useEffect(() => { loadData(); }, []);
 
-const handleDeleteTransaction = () => {
-if (!editingTransaction) return;
-setConfirmDialog({
-title: '전표 삭제',
-message: '이 거래를 삭제하시겠습니까?',
-onConfirm: () => {
-setTransactions(prev => prev.filter(t => t.id !== editingTransaction.id));
-setIsDirty(true); setIsEntryModalOpen(false); setEditingTransaction(null); setConfirmDialog(null);
-}
-});
-};
-
-const handleSaveEntry = () => {
-if (totalDebitSum !== totalCreditSum || totalDebitSum === 0) return;
-const newTransaction = {
-id: editingTransaction ? editingTransaction.id : `T-${Date.now()}`,
-date: entryRows.date,
-debits: entryRows.debits.filter(d => d.account && d.amount > 0),
-credits: entryRows.credits.filter(c => c.account && c.amount > 0),
-memo: entryRows.memo || '거래 내역'
-};
-setTransactions(prev => editingTransaction ? prev.map(t => t.id === editingTransaction.id ? newTransaction : t) : [...prev, newTransaction]);
-setIsDirty(true); setIsEntryModalOpen(false); setEditingTransaction(null);
-setEntryRows({ date: new Date().toISOString().split('T')[0], debits: [{ account: '', amount: 0 }], credits: [{ account: '', amount: 0 }], memo: '' });
-};
-
-const handleClosing = () => {
-  const closingDebits = [];
-  const closingCredits = [];
-  let totalRevToClear = 0;
-  let totalExpToClear = 0;
-
-  accounts.revenue.forEach(acc => {
-    const bal = accountBalances[acc.name] || 0;
-    if (bal !== 0) {
-      if (bal < 0) {
-        const amt = Math.abs(bal);
-        closingDebits.push({ account: acc.name, amount: amt });
-        totalRevToClear += amt;
-      } else {
-        const amt = bal;
-        closingCredits.push({ account: acc.name, amount: amt });
-        totalRevToClear -= amt;
+      if (loading || !data) {
+        return <div className="loading-overlay"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div><p className="mt-3 font-bold text-slate-600">장부 데이터를 불러오는 중...</p></div>;
       }
-    }
-  });
 
-  accounts.expenses.forEach(acc => {
-    const bal = accountBalances[acc.name] || 0;
-    if (bal !== 0) {
-      if (bal > 0) {
-        const amt = bal;
-        closingCredits.push({ account: acc.name, amount: amt });
-        totalExpToClear += amt;
-      } else {
-        const amt = Math.abs(bal);
-        closingDebits.push({ account: acc.name, amount: amt });
-        totalExpToClear -= amt;
-      }
-    }
-  });
+      return (
+        <div className="min-h-screen flex flex-col">
+          {/* Header & Navigation */}
+          <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
+            <div className="max-w-4xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between">
+              <h1 className="text-xl font-black text-indigo-600 flex items-center gap-2">
+                <i data-lucide="book-open" className="w-6 h-6"></i> DoubleBook
+              </h1>
+              <nav className="flex gap-2 sm:gap-4 overflow-x-auto mt-3 sm:mt-0 w-full sm:w-auto pb-1 sm:pb-0 hide-scrollbar">
+                {['entry', 'ledger', 'budget'].map(tab => (
+                  <button 
+                    key={tab}
+                    onClick={() => { setActiveTab(tab); setTimeout(() => lucide.createIcons(), 50); }}
+                    className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-colors ${activeTab === tab ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}
+                  >
+                    {tab === 'entry' && '전표입력'}
+                    {tab === 'ledger' && '총계정원장'}
+                    {tab === 'budget' && '예산내역'}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          </header>
 
-  if (totalRevToClear === 0 && totalExpToClear === 0) {
-    setStatusMessage({ type: 'error', text: '결산할 잔액이 없습니다.' });
-    return;
-  }
+          {/* Main Content Area */}
+          <main className="flex-1 p-4 sm:p-6 w-full">
+            {activeTab === 'budget' && (
+              <BudgetPage 
+                accounts={data.accounts} 
+                transactions={data.transactions} 
+                budgets={data.budgets || []} 
+                onSave={loadData} 
+              />
+            )}
+            {activeTab === 'entry' && <div className="text-center py-20 text-slate-400 font-bold">전표입력 페이지 (기존 기능 유지)</div>}
+            {activeTab === 'ledger' && <div className="text-center py-20 text-slate-400 font-bold">총계정원장 페이지 (기존 기능 유지)</div>}
+          </main>
+        </div>
+      );
+    };
 
-  const netIncome = totalRevToClear - totalExpToClear;
-
-  setConfirmDialog({
-    title: '장부 결산 실행',
-    message: `${standardDate} 기준으로 수익과 비용의 모든 잔액을 정리하시겠습니까? (순이익 ${netIncome.toLocaleString()}원)`,
-    onConfirm: () => {
-      const ts = Date.now();
-      const entry1_debits = [...closingDebits];
-      const entry1_credits = [...closingCredits];
-      if (netIncome > 0) { entry1_credits.push({ account: '결산(임시)', amount: netIncome }); } 
-      else if (netIncome < 0) { entry1_debits.push({ account: '결산(임시)', amount: Math.abs(netIncome) }); }
-
-      const entry1 = { id: `CLOSE-A-${ts}`, date: standardDate, debits: entry1_debits, credits: entry1_credits, memo: `[결산-1] ${standardDate} 수익비용 잔액 집계` };
-
-      const entry2_debits = [];
-      const entry2_credits = [];
-      if (netIncome > 0) {
-        entry2_debits.push({ account: '결산(임시)', amount: netIncome });
-        entry2_credits.push({ account: '이익잉여금', amount: netIncome });
-      } else if (netIncome < 0) {
-        const loss = Math.abs(netIncome);
-        entry2_debits.push({ account: '이익잉여금', amount: loss });
-        entry2_credits.push({ account: '결산(임시)', amount: loss });
-      }
-
-      const newEntries = [entry1];
-      if (netIncome !== 0) {
-        newEntries.push({ id: `CLOSE-B-${ts}`, date: standardDate, debits: entry2_debits, credits: entry2_credits, memo: `[결산-2] ${standardDate} 순이익 이익잉여금 대체` });
-      }
-      setTransactions(prev => [...prev, ...newEntries]);
-      setIsDirty(true); setConfirmDialog(null); setStatusMessage({ type: 'success', text: '결산이 완료되었습니다.' });
-    }
-  });
-};
-
-const handleUpdateEntryRow = (type, index, field, value) => {
-setEntryRows(prev => {
-const newRows = [...prev[type]];
-newRows[index] = { ...newRows[index], [field]: value };
-return { ...prev, [type]: newRows };
-});
-};
-
-const handleAccountPick = (name) => {
-if (!activePicker) return;
-const { type, index } = activePicker;
-if (type === 'setupDebits') setInitialSetup(prev => { const n = [...prev.debits]; n[index].account = name; return { ...prev, debits: n }; });
-else if (type === 'setupCredits') setInitialSetup(prev => { const n = [...prev.credits]; n[index].account = name; return { ...prev, credits: n }; });
-else handleUpdateEntryRow(type, index, 'account', name);
-setActivePicker(null); setIsDirty(true);
-};
-
-const handleDragOver = (e) => e.preventDefault();
-const handleAccountDragStart = (id) => setDraggedAccountId(id);
-const handleSubtypeDrop = (subtype, type) => {
-if (!draggedAccountId) return;
-setAccounts(prev => ({ ...prev, [type]: prev[type].map(a => String(a.id) === String(draggedAccountId) ? { ...a, subtype } : a) }));
-setIsDirty(true); setDraggedAccountId(null);
-};
-
-return (
-<div className="flex flex-col md:flex-row h-screen bg-slate-50 overflow-hidden text-slate-900">
-{isLoading && <div className="loading-overlay"><div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div><p className="font-bold text-indigo-600 text-sm">데이터 동기화 중...</p></div>}
-{statusMessage && <div className="fixed top-4 right-4 z-[300] p-4 rounded-2xl shadow-2xl border bg-emerald-50 border-emerald-200 text-emerald-800 font-bold text-sm">✓ {statusMessage.text}</div>}
-
-<Modal isOpen={confirmDialog !== null} onClose={() => setConfirmDialog(null)} title={confirmDialog?.title || '확인'} maxWidth="max-w-md" zIndex="z-[200]">
-<div className="space-y-6 text-center">
-<p className="font-medium text-slate-600 leading-relaxed text-sm">{confirmDialog?.message}</p>
-<div className="flex gap-3 justify-center pb-2">
-<button onClick={() => setConfirmDialog(null)} className="px-6 py-2 rounded-xl bg-slate-100 font-bold text-sm">취소</button>
-<button onClick={confirmDialog?.onConfirm} className="px-6 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm shadow-lg">확인</button>
-</div>
-</div>
-</Modal>
-
-<aside className={`sidebar-transition bg-white border-r border-slate-200 shrink-0 flex flex-col overflow-hidden fixed md:relative z-40 shadow-xl md:shadow-none h-full ${isSidebarOpen ? 'w-64' : 'w-0 md:w-20'}`}>
-<div className="p-6 flex items-center gap-3">
-<div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg shrink-0"><i data-lucide="wallet"></i></div>
-{isSidebarOpen && <span className="font-bold text-xl animate-in fade-in">DoubleBook</span>}
-</div>
-<nav className="flex-1 px-3 space-y-1 mt-4">
-{[
-{ id: 'BS', label: '재무상태표', icon: 'layout-dashboard' },
-{ id: 'IS', label: '손익계산서', icon: 'pie-chart' },
-{ id: 'GL', label: '총계정원장', icon: 'book-open' }
-].map(nav => (
-<button key={nav.id} onClick={() => { setCurrentView(nav.id); if(window.innerWidth < 768) setIsSidebarOpen(false); }} className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${currentView === nav.id ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-100 text-slate-500'}`}>
-<i data-lucide={nav.icon} className="shrink-0"></i>
-{isSidebarOpen && <span className="font-medium animate-in fade-in whitespace-nowrap">{nav.label}</span>}
-</button>
-))}
-</nav>
-<div className="p-3 border-t text-slate-800 space-y-2 mb-4">
-<button onClick={handleSync} className={`w-full flex items-center gap-3 p-3 rounded-xl mb-2 font-bold transition-all ${isDirty ? 'bg-orange-500 text-white animate-pulse shadow-lg' : 'bg-slate-100 text-slate-400'}`}>
-<i data-lucide="cloud-upload" className="shrink-0"></i>
-{isSidebarOpen && <span className="animate-in fade-in whitespace-nowrap">클라우드 저장</span>}
-</button>
-<button onClick={() => { setIsSettingsModalOpen(true); if(window.innerWidth < 768) setIsSidebarOpen(false); }} className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-100 font-bold transition-colors">
-<i data-lucide="settings" className="shrink-0"></i>
-{isSidebarOpen && <span className="animate-in fade-in whitespace-nowrap">설정</span>}
-</button>
-</div>
-</aside>
-
-{isSidebarOpen && <div onClick={() => setIsSidebarOpen(false)} className="md:hidden fixed inset-0 bg-black/40 z-30 backdrop-blur-sm animate-in fade-in"></div>}
-
-<main className="flex-1 flex flex-col overflow-hidden relative">
-<header className="h-14 sm:h-16 bg-white border-b flex items-center justify-between px-3 sm:px-6 shrink-0 z-10 shadow-sm text-slate-800">
-<div className="flex items-center gap-3 sm:gap-6">
-<button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500"><i data-lucide={isSidebarOpen ? 'chevron-left' : 'menu'} className="w-5 h-5"></i></button>
-<div className="flex items-center gap-1 sm:gap-3 bg-slate-50 px-2 sm:px-3 py-1.5 rounded-xl border border-slate-100 text-slate-700 font-bold">
-<i data-lucide="calendar" className="text-indigo-500 w-3 h-3 sm:w-4 sm:h-4"></i>
-<input type="date" className="bg-transparent border-none outline-none text-[11px] sm:text-sm font-bold w-24 sm:w-32 cursor-pointer text-slate-700" value={standardDate} onChange={(e) => setStandardDate(e.target.value)} />
-</div>
-</div>
-<div className="flex items-center gap-2">
-<button onClick={handleClosing} className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl font-bold border border-slate-200 transition-all text-[11px] sm:text-sm active:scale-95 shadow-sm">
-<i data-lucide="calculator" className="w-3.5 h-3.5 sm:w-4 sm:h-4"></i><span>결산 실행</span>
-</button>
-<button onClick={() => { setEntryRows({ date: standardDate, debits: [{ account: '', amount: 0 }], credits: [{ account: '', amount: 0 }], memo: '' }); setIsEntryModalOpen(true); }} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl font-bold shadow-md active:scale-95 transition-all text-[11px] sm:text-sm">
-<i data-lucide="plus-circle" className="w-3.5 h-3.5 sm:w-4 sm:h-4"></i><span>거래 입력</span>
-</button>
-</div>
-</header>
-
-<div className="flex-1 overflow-y-auto p-3 sm:p-8 pb-24">
-{currentView === 'BS' && (
-<div className="max-w-6xl mx-auto flex flex-col lg:grid lg:grid-cols-2 lg:gap-px bg-slate-100 lg:rounded-3xl overflow-hidden lg:border shadow-lg rounded-2xl border border-slate-200 text-slate-800">
-<div className="bg-white p-5 sm:p-8 border-b lg:border-none">
-<h3 className="text-sm sm:text-xl font-black text-indigo-600 border-b-2 border-indigo-500 pb-2 mb-4 sm:mb-6 uppercase tracking-widest text-center">Assets</h3>
-<div className="space-y-3 sm:space-y-4 min-h-[100px] sm:min-h-[250px]">
-{accounts.assets.filter(acc =>  (accountBalances[acc.name] || 0) !== 0).map(acc => (<div key={acc.id} className="flex justify-between items-center"><span className="text-xs sm:text-base text-slate-600 font-medium">{acc.name}</span><span className="font-mono font-bold text-sm sm:text-lg">{(accountBalances[acc.name] || 0).toLocaleString()}원</span></div>))}
-</div>
-<div className="mt-6 sm:mt-8 pt-4 border-t-2 border-slate-50 flex justify-between items-center font-black"><span className="text-xs sm:text-lg uppercase">Total Assets</span><span className="font-mono font-black text-lg sm:text-2xl text-indigo-600">{totalAssets.toLocaleString()}원</span></div>
-</div>
-<div className="bg-white p-5 sm:p-8 flex flex-col text-slate-800">
-<div className="flex-1">
-<h3 className="text-sm sm:text-xl font-black text-red-500 border-b-2 border-red-500 pb-2 mb-4 sm:mb-6 uppercase tracking-widest text-center">Liabilities</h3>
-<div className="space-y-3 sm:space-y-4 mb-8 sm:mb-12">
-{accounts.liabilities.filter(a => a.name !== '이익잉여금' && (accountBalances[a.name] || 0) !== 0).map(acc => (<div key={acc.id} className="flex justify-between items-center"><span className="text-xs sm:text-base text-slate-600 font-medium">{acc.name}</span><span className="font-mono font-bold text-sm sm:text-lg">{Math.abs(accountBalances[acc.name] || 0).toLocaleString()}원</span></div>))}
-</div>
-<h3 className="text-[10px] sm:text-xs font-black text-emerald-600 border-b border-emerald-200 pb-2 mb-3 sm:mb-4 uppercase tracking-widest">Equity</h3>
-<div className="space-y-2 sm:space-y-3 font-bold">
-<div className="flex justify-between items-center text-[11px] sm:text-sm"><span>자본금</span><span className="font-mono">{calculatedInitialCapital.toLocaleString()}원</span></div>
-<div className="flex justify-between items-center bg-emerald-50 p-2 sm:p-3 rounded-xl border border-emerald-100 font-bold text-emerald-700"><span className="text-[10px] sm:text-xs">이익Í잉여금 (누적)</span><span className="font-mono text-xs sm:text-base">{retainedEarningsBalance.toLocaleString()}원</span></div>
-<div className="flex justify-between items-center border-t border-slate-50 pt-3"><span className="text-slate-400 text-[10px] sm:text-xs italic">당기순손익 (미결산)</span><span className={`font-mono text-xs sm:text-base font-bold ${unsettledNetIncome >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{unsettledNetIncome.toLocaleString()}원</span></div>
-</div>
-</div>
-<div className="mt-6 sm:mt-8 pt-4 border-t-2 border-slate-50 flex justify-between items-center font-black"><span className="text-xs sm:text-lg uppercase">Total L+E</span><span className="font-mono text-lg sm:text-2xl text-indigo-600">{(totalLiabilitiesOnly + currentEquity).toLocaleString()}원</span></div>
-</div>
-</div>
-)}
-
-{currentView === 'IS' && (
-<div className="max-w-4xl mx-auto bg-white rounded-3xl border shadow-md p-5 sm:p-8 space-y-8 sm:space-y-12 text-slate-800">
-<section>
-<div className="flex justify-between items-end border-b-4 border-emerald-500 pb-2 mb-4 sm:mb-6 font-black"><h3 className="text-base sm:text-2xl text-emerald-600 uppercase">I. Revenue</h3><span className="font-mono text-lg sm:text-2xl font-black text-emerald-600">{revenueHierarchy.total.toLocaleString()}원</span></div>
-<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-{revenueHierarchy.groups.filter(g => g.subtotal !== 0).map(group => (
-<div key={group.label} className="bg-slate-50 rounded-2xl p-4 border text-slate-800 font-bold">
-<div className="flex justify-between text-[10px] sm:text-xs font-black text-slate-400 uppercase mb-3 border-b pb-1"><span>{group.label}</span><span>{group.subtotal.toLocaleString()}원</span></div>
-<div className="space-y-1">
-{group.accounts.map(a => (
-<div key={a.name} className="flex justify-between text-[11px] sm:text-sm py-0.5 italic"><span>{a.name}</span><span className="font-mono">{a.amount.toLocaleString()}원</span></div>
-))}
-</div>
-</div>
-))}
-</div>
-</section>
-<section>
-<div className="flex justify-between items-end border-b-4 border-orange-500 pb-2 mb-4 sm:mb-6 font-black"><h3 className="text-base sm:text-2xl text-orange-600 uppercase">II. Expenses</h3><span className="font-mono text-lg sm:text-2xl font-black text-orange-600">{expensesHierarchy.total.toLocaleString()}원</span></div>
-<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-{expensesHierarchy.groups.filter(g => g.subtotal !== 0).map(group => (
-<div key={group.label} className="bg-slate-50 rounded-2xl p-4 border text-slate-800 font-bold">
-<div className="flex justify-between text-[10px] sm:text-xs font-black text-slate-400 uppercase mb-3 border-b pb-1"><span>{group.label}</span><span>{group.subtotal.toLocaleString()}원</span></div>
-<div className="space-y-1">
-{group.accounts.map(a => (
-<div key={a.name} className="flex justify-between text-[11px] sm:text-sm py-0.5 italic"><span>{a.name}</span><span className="font-mono">{a.amount.toLocaleString()}원</span></div>
-))}
-</div>
-</div>
-))}
-</div>
-</section>
-<div className={`p-5 sm:p-8 rounded-2xl sm:rounded-3xl flex justify-between items-center shadow-inner border-2 sm:border-4 ${reportNetIncome >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}><div className="shrink-0 font-black"><h4 className="font-black text-sm sm:text-xl uppercase tracking-tighter text-slate-700">Net Income</h4></div><span className={`font-mono text-xl sm:text-5xl font-black ${reportNetIncome >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{reportNetIncome.toLocaleString()}원</span></div>
-</div>
-)}
-
-{currentView === 'GL' && (
-<div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-6 text-slate-800 pb-10">
-{['assets', 'liabilities', 'revenue', 'expenses'].map(cat => (
-<div key={cat} className="bg-white p-4 sm:p-6 rounded-2xl border shadow-sm h-fit"><h3 className="text-[10px] sm:text-xs font-black uppercase text-slate-400 mb-3 text-center tracking-widest">{cat.toUpperCase()} Accounts</h3><div className="space-y-1.5">{(accounts[cat] || []).map(a => (<div key={a.id} className="flex justify-between p-3 bg-slate-50 rounded-xl border border-transparent font-bold"><span className="text-xs sm:text-base">{a.name}</span><span className="font-mono text-sm sm:text-base">{(cat==='liabilities'||cat==='revenue' ? Math.abs(accountBalances[a.name] || 0) : accountBalances[a.name] || 0).toLocaleString()}원</span></div>))}</div></div>
-))}
-</div>
-)}
-</div>
-</main>
-
-<Modal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} title="더블북 환경 설정" maxWidth="max-w-5xl" zIndex="z-[100]">
-<div className="flex flex-col md:flex-row gap-4 h-[78vh] md:h-[650px] overflow-hidden text-slate-800">
-<div className="flex md:flex-col overflow-x-auto pb-1 md:pb-0 gap-1.5 w-full md:w-48 shrink-0">
-{[{ id: 'equity', label: '자본금', icon: 'coins' }, { id: 'accounts', label: '계정과목', icon: 'settings' }, { id: 'editTransactions', label: '거래 관리', icon: 'edit-3' }].map(tab => (
-<button key={tab.id} onClick={() => setSettingsTab(tab.id)} className={`flex items-center justify-center md:justify-start gap-2 p-3 sm:p-4 rounded-xl font-bold transition-all flex-1 md:flex-none text-xs sm:text-sm whitespace-nowrap ${settingsTab === tab.id ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}><i data-lucide={tab.icon} className="w-4 h-4"></i>{tab.label}</button>
-))}
-</div>
-<div className="flex-1 overflow-y-auto pr-0 md:pr-4 modal-scroll pb-10">
-{settingsTab === 'equity' && (
-<div className="space-y-6">
-<h4 className="text-sm font-black uppercase tracking-widest text-slate-800 ml-1">자본금 및 기초 부채</h4>
-<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-<div className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col shadow-sm">
-<div className="bg-indigo-600 text-white p-2 text-center text-[10px] font-black uppercase">Debit (차변 - 기초 자산)</div>
-<div className="p-3 space-y-2 min-h-[150px] flex-1">
-{(initialSetup.debits || []).map((r, i) => (
-<div key={i} className="flex gap-2 items-center">
-<button onClick={() => setActivePicker({ type: 'setupDebits', index: i })} className="flex-1 p-2.5 rounded-lg bg-slate-50 text-[11px] font-bold border border-slate-100 text-left truncate">{r.account || '자산 선택'}</button>
-<input type="number" className="w-20 sm:w-28 p-2 rounded-lg bg-white text-right font-black border border-slate-200 text-indigo-600 text-xs sm:text-sm outline-none" value={r.amount || ''} onChange={(e) => { const val = Number(e.target.value); setInitialSetup(prev => { const n = [...prev.debits]; n[i] = { ...n[i], amount: val }; return { ...prev, debits: n }; }); setIsDirty(true); }} />
-<button onClick={()=>{ setInitialSetup(prev => { const n = [...prev.debits]; if (n.length > 1) n.splice(i, 1); return { ...prev, debits: n }; }); setIsDirty(true); }} className="text-slate-300 hover:text-red-500 p-1"><TrashIcon/></button>
-</div>
-))}
-<button onClick={() => { setInitialSetup(prev => ({ ...prev, debits: [...(prev.debits || []), { account: '', amount: 0 }] })); setIsDirty(true); }} className="w-full p-2 mt-2 text-[10px] font-black text-indigo-500 border border-dashed border-indigo-200 rounded-lg hover:bg-indigo-50">+ 자산 추가</button>
-</div>
-<div className="bg-slate-50 p-3 flex justify-between font-black border-t text-xs"><span className="text-[9px] uppercase text-slate-400">Sum of Assets</span><span className="font-mono text-indigo-600 font-black">{setupTotalDebits.toLocaleString()}원</span></div>
-</div>
-<div className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col h-fit shadow-sm">
-<div className="bg-emerald-600 text-white p-2 text-center text-[10px] font-black uppercase">Credit (대변 - 자본/부채)</div>
-<div className="p-3 space-y-3">
-<div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100 flex justify-between items-center"><span className="font-bold text-emerald-800 text-[11px] sm:text-sm font-black">자본금 (자동 계산)</span><span className="font-mono font-black text-emerald-600 text-xs sm:text-lg">{calculatedInitialCapital.toLocaleString()}원</span></div>
-<div className="text-[9px] font-black text-slate-300 uppercase tracking-widest pt-1 border-t mb-1">기초 부채 내역</div>
-{(initialSetup.credits || []).map((r, i) => (
-<div key={i} className="flex gap-2 items-center">
-<button onClick={() => setActivePicker({ type: 'setupCredits', index: i })} className="flex-1 p-2.5 rounded-lg bg-slate-50 text-[11px] font-bold border border-slate-100 text-left truncate">{r.account || '부채 선택'}</button>
-<input type="number" className="w-20 sm:w-28 p-2 rounded-lg bg-white text-right font-black border border-slate-200 text-red-500 text-xs outline-none" value={r.amount || ''} onChange={(e) => { const val = Number(e.target.value); setInitialSetup(prev => { const n = [...prev.credits]; n[i] = { ...n[i], amount: val }; return { ...prev, credits: n }; }); setIsDirty(true); }} />
-<button onClick={()=>{ setInitialSetup(prev => { const n = [...prev.credits]; n.splice(i, 1); return { ...prev, credits: n }; }); setIsDirty(true); }} className="text-slate-300 hover:text-red-500 p-1"><TrashIcon/></button>
-</div>
-))}
-<button onClick={() => { setInitialSetup(prev => ({ ...prev, credits: [...(prev.credits || []), { account: '', amount: 0 }] })); setIsDirty(true); }} className="w-full p-2 mt-1 text-[10px] font-black text-red-400 border border-dashed border-red-100 rounded-lg hover:bg-red-50">+ 부채 추가</button>
-</div>
-</div>
-</div>
-</div>
-)}
-{settingsTab === 'accounts' && (
-<div className="space-y-10">
-<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-{['assets', 'liabilities'].map(cat => (
-<div key={cat} className="bg-slate-50 p-4 rounded-2xl border shadow-inner h-fit text-slate-800">
-<div className="flex justify-between items-center mb-3 text-indigo-500 font-black text-[10px] uppercase"><span>{cat.toUpperCase()} Accounts</span><button onClick={() => setAddingToCategory(cat)} className="p-1 hover:bg-indigo-100 rounded-full transition-colors"><i data-lucide="plus" className="w-4 h-4"></i></button></div>
-<div className="space-y-1.5">
-{(accounts[cat] || []).filter(a => a.name !== '이익잉여금').map(a => (
-<div key={a.id} className="flex items-center gap-2 p-2 bg-white rounded-xl border group shadow-sm transition-all hover:border-indigo-200 font-bold">
-<input className="flex-1 bg-transparent border-none outline-none font-bold text-xs sm:text-sm text-slate-800" value={a.name} onChange={(e) => handleUpdateAccountName(cat, a.id, e.target.value)} />
-<button onClick={() => handleDeleteAccount(cat, a.id)} className="sm:opacity-0 group-hover:opacity-100 text-red-400 p-1.5"><TrashIcon/></button>
-</div>
-))}
-{addingToCategory === cat && (
-<div className="p-1"><input autoFocus className="w-full p-2 bg-white rounded-xl border border-indigo-200 text-xs font-bold text-indigo-600 outline-none" placeholder="항목 입력 후 Enter" onBlur={(e) => handleAddAccount(cat, e.target.value)} onKeyDown={(e)=>e.key==='Enter'&&e.target.blur()} /></div>
-)}
-</div>
-</div>
-))}
-</div>
-<div className="space-y-6">
-{['revenue', 'expenses'].map(type => (
-<div key={type} className="border-t pt-5">
-<div className="flex justify-between items-center mb-4"><h5 className="font-black text-indigo-600 uppercase tracking-widest text-[11px]">{type.toUpperCase()} 분류 관리</h5><button onClick={() => setAddingToCategory(type)} className="text-[10px] bg-indigo-600 text-white px-3 py-1.5 rounded-full font-black shadow-sm">+ 추가</button></div>
-<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-{['fixed', 'variable'].map(subtype => (
-<div key={subtype} onDragOver={handleDragOver} onDrop={() => handleSubtypeDrop(subtype, type)} className="bg-white border-2 border-slate-50 rounded-2xl p-4 sm:p-5 transition-all shadow-sm min-h-[120px]">
-<div className="flex justify-between items-center mb-3 border-b border-slate-50 pb-1.5 text-slate-400 font-black"><span className="uppercase text-[9px] tracking-widest">{subtype === 'fixed' ? '고정 (Fixed)' : '변동 (Variable)'}</span><i data-lucide={subtype === 'fixed' ? 'lock' : 'zap'} className="w-3 h-3"></i></div>
-<div className="grid grid-cols-1 gap-1.5">
-{accounts[type].filter(a => (a.subtype || 'fixed') === subtype).map(acc => (
-<div key={acc.id} draggable onDragStart={() => handleAccountDragStart(acc.id)} className="bg-slate-50 border border-slate-100 px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-3 group hover:bg-white hover:border-indigo-100 transition-all text-slate-700 w-full shadow-sm">
-<i data-lucide="grip-vertical" className="text-slate-200 shrink-0 hidden sm:block"></i>
-<input className="bg-transparent border-none outline-none flex-1 font-bold min-w-0" value={acc.name} onChange={(e) => handleUpdateAccountName(type, acc.id, e.target.value)} />
-<button onClick={() => handleDeleteAccount(type, acc.id)} className="sm:opacity-0 group-hover:opacity-100 text-red-400 p-1"><i data-lucide="x" className="w-3.5 h-3.5"></i></button>
-</div>
-))}
-</div>
-</div>
-))}
-</div>
-{addingToCategory === type && (<div className="mt-3 p-3 bg-indigo-50 rounded-2xl border border-indigo-100 text-center"><input autoFocus className="bg-transparent border-none outline-none font-black text-indigo-600 text-center text-xs w-full" placeholder="항목 입력 후 Enter..." onBlur={(e) => handleAddAccount(type, e.target.value)} onKeyDown={(e)=>e.key==='Enter'&&e.target.blur()} /></div>)}
-</div>
-))}
-</div>
-</div>
-)}
-{settingsTab === 'editTransactions' && (
-<div className="space-y-4 pb-10">
-<div className="flex items-center gap-2 mb-4 bg-white p-3 rounded-xl border border-slate-100 text-slate-800 font-bold overflow-x-auto">
-<i data-lucide="search" className="text-slate-300 w-4 h-4 shrink-0"></i><input type="date" className="bg-transparent outline-none font-bold text-[11px] cursor-pointer" value={editRange.start} onChange={(e)=>setEditRange({...editRange, start: e.target.value})}/><span className="text-slate-300">~</span><input type="date" className="bg-transparent outline-none font-bold text-[11px] cursor-pointer" value={editRange.end} onChange={(e)=>setEditRange({...editRange, end: e.target.value})}/>
-</div>
-<div className="space-y-2">
-{transactions.filter(t => t.date >= editRange.start && t.date <= editRange.end).sort((a,b) => b.date.localeCompare(a.date)).map(t => (
-<div key={t.id} onClick={()=>{setEditingTransaction(t); setEntryRows({date:t.date, debits:t.debits, credits:t.credits, memo:t.memo}); setIsEntryModalOpen(true);}} className="p-3.5 bg-white border rounded-xl flex justify-between cursor-pointer hover:border-indigo-500 transition-all shadow-sm active:bg-indigo-50">
-<div><p className="text-[9px] font-black text-slate-400 uppercase">{t.date}</p><p className="font-bold text-xs text-slate-700 mt-0.5">{t.memo || '거래 내역'}</p></div>
-<div className="text-right flex flex-col justify-center"><div className="font-mono font-black text-slate-700 text-xs sm:text-base">{(t.debits.reduce((s,d)=>s+d.amount, 0)).toLocaleString()}원</div></div>
-</div>
-))}
-</div>
-</div>
-)}
-</div>
-</div>
-</Modal>
-
-<Modal isOpen={isEntryModalOpen} onClose={() => {setIsEntryModalOpen(false); setEditingTransaction(null);}} title={editingTransaction?"전표 수정":"전표 입력"} maxWidth="max-w-6xl" zIndex="z-[120]">
-<div className="flex flex-col lg:flex-row gap-4 sm:gap-6 text-slate-800">
-<div className="w-full lg:w-48 shrink-0 bg-slate-50 p-4 rounded-2xl border h-fit shadow-inner">
-<label className="block text-[9px] font-black text-slate-400 uppercase mb-2 text-center lg:text-left">전표 날짜</label>
-<input type="date" className="w-full p-2.5 rounded-xl border text-xs font-bold outline-none mb-3 shadow-sm bg-white text-slate-700" value={entryRows.date} onChange={(e) => setEntryRows({...entryRows, date: e.target.value})} />
-{editingTransaction && (<button onClick={handleDeleteTransaction} className="w-full p-3 bg-red-50 text-red-500 rounded-xl font-bold text-[11px] hover:bg-red-500 hover:text-white transition-all shadow-sm flex items-center justify-center gap-2"><i data-lucide="trash-2" className="w-3.5 h-3.5"></i>삭제하기</button>)}
-</div>
-<div className="flex-1 space-y-4 pb-20 sm:pb-0">
-<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-<div className="bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
-<div className="bg-indigo-600 text-white p-2 font-black text-center text-[10px] uppercase">Debit (차변)</div>
-<div className="p-3 space-y-2 min-h-[120px] sm:min-h-[250px] flex-1">
-{entryRows.debits.map((r, i) => (
-<div key={i} className="flex gap-1.5 items-center animate-in slide-in-from-left-2">
-<button onClick={() => setActivePicker({ type: 'debits', index: i })} className="flex-1 p-2.5 rounded-lg bg-slate-50 text-[11px] font-bold border border-slate-100 text-left truncate active:bg-indigo-50">{r.account || '계정 선택'}</button>
-<input type="number" className="w-20 sm:w-28 p-2 rounded-lg bg-white text-right font-black border border-slate-200 text-xs outline-none" placeholder="0" value={r.amount || ''} onChange={(e) => handleUpdateEntryRow('debits', i, 'amount', Number(e.target.value))} />
-<button onClick={()=>{const n=[...entryRows.debits]; if(n.length>1){n.splice(i,1); setEntryRows(prev => ({...prev, debits:n}));}}} className="text-slate-300 hover:text-red-500 p-1"><TrashIcon/></button>
-</div>
-))}
-<button onClick={() => setEntryRows(prev => ({...prev, debits: [...prev.debits, {account:'', amount:0}]}))} className="w-full p-2 mt-1 text-[10px] font-black text-indigo-500 border border-dashed border-indigo-200 rounded-lg hover:bg-indigo-50">+ 행 추가</button>
-</div>
-<div className="bg-slate-50 p-2.5 flex justify-between font-black border-t text-xs sm:text-base"><span className="text-[9px] uppercase text-slate-400">Total Debit</span><span className="font-mono text-indigo-600 font-black">{totalDebitSum.toLocaleString()}원</span></div>
-</div>
-<div className="bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
-<div className="bg-red-500 text-white p-2 font-black text-center text-[10px] uppercase">Credit (대변)</div>
-<div className="p-3 space-y-2 min-h-[120px] sm:min-h-[250px] flex-1">
-{entryRows.credits.map((r, i) => (
-<div key={i} className="flex gap-1.5 items-center animate-in slide-in-from-right-2">
-<button onClick={() => setActivePicker({ type: 'credits', index: i })} className="flex-1 p-2.5 rounded-lg bg-slate-50 text-[11px] font-bold border border-slate-100 text-left truncate active:bg-red-50">{r.account || '계정 선택'}</button>
-<input type="number" className="w-20 sm:w-28 p-2 rounded-lg bg-white text-right font-black border border-slate-200 text-xs outline-none" placeholder="0" value={r.amount || ''} onChange={(e) => handleUpdateEntryRow('credits', i, 'amount', Number(e.target.value))} />
-<button onClick={()=>{const n=[...entryRows.credits]; if(n.length>1){n.splice(i,1); setEntryRows(prev => ({...prev, credits:n}));}}} className="text-slate-300 hover:text-red-500 p-1"><TrashIcon/></button>
-</div>
-))}
-<button onClick={() => setEntryRows(prev => ({...prev, credits: [...prev.credits, {account:'', amount:0}]}))} className="w-full p-2 mt-1 text-[10px] font-black text-red-500 border border-dashed border-red-200 rounded-lg hover:bg-red-50">+ 행 추가</button>
-</div>
-<div className="bg-slate-50 p-2.5 flex justify-between font-black border-t text-xs sm:text-base"><span className="text-[9px] uppercase text-slate-400">Total Credit</span><span className="font-mono text-red-500 font-black">{totalCreditSum.toLocaleString()}원</span></div>
-</div>
-</div>
-<div className="bg-slate-50 p-3 sm:p-4 rounded-2xl border flex flex-col gap-3 shadow-inner">
-<input type="text" className="w-full bg-white p-2.5 rounded-xl border border-slate-200 outline-none font-bold placeholder:text-slate-300 text-slate-700 text-xs sm:text-base" placeholder="거래 메모를 입력하세요 (예: 식비 결제)" value={entryRows.memo} onChange={(e) => setEntryRows({...entryRows, memo: e.target.value})} />
-<div className="flex items-center justify-between gap-4">
-<span className={`px-4 py-2 rounded-full text-[10px] font-black uppercase shadow-sm ${totalDebitSum === totalCreditSum && totalDebitSum > 0 ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>{totalDebitSum === totalCreditSum && totalDebitSum > 0 ? '차대일치' : '불일치'}</span>
-<button onClick={handleSaveEntry} disabled={totalDebitSum !== totalCreditSum || totalDebitSum === 0} className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white px-6 py-3 rounded-xl font-black shadow-lg transition-all active:scale-95 text-xs sm:text-sm whitespace-nowrap">전표 저장하기</button>
-</div>
-</div>
-</div>
-</div>
-</Modal>
-
-<Modal isOpen={activePicker !== null} onClose={() => setActivePicker(null)} title="계정과목 선택" maxWidth="max-w-4xl" zIndex="z-[150]">
-<AccountGridPicker accounts={accounts} onPick={handleAccountPick} />
-</Modal>
-</div>
-);
-};
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
-</script>
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
 </body>
 </html>
