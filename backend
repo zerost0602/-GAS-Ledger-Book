@@ -10,10 +10,13 @@ function getSheet(name) {
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
+    // 각 시트별 초기 헤더 셋업
     if (name === 'Transactions') {
       sheet.appendRow(['id', 'date', 'debits', 'credits', 'memo']);
     } else if (name === 'Settings') {
       sheet.appendRow(['key', 'value']);
+    } else if (name === 'Budgets') { // 예산내역을 위한 시트 신규 추가
+      sheet.appendRow(['id', 'yearMonth', 'account', 'content', 'amount']);
     }
   }
   return sheet;
@@ -22,79 +25,103 @@ function getSheet(name) {
 function getAllData() {
   const settingsSheet = getSheet('Settings');
   const transSheet = getSheet('Transactions');
+  const budgetSheet = getSheet('Budgets');
+  
   const settingsRaw = settingsSheet.getDataRange().getValues();
   const transRaw = transSheet.getDataRange().getValues();
+  const budgetRaw = budgetSheet.getDataRange().getValues();
   
   let initialSetup = { debits: [{ account: '현금', amount: 0 }], credits: [] };
-  let accounts = {
-    assets: [{ id: 'a1', name: '현금', subtype: 'fixed' }],
-    liabilities: [{ id: 'l1', name: '신용카드', subtype: 'variable' }, { id: 'e1', name: '이익잉여금', subtype: 'fixed' }],
-    revenue: [{ id: 'r1', name: '급여', subtype: 'fixed' }],
-    expenses: [{ id: 'x1', name: '식비', subtype: 'variable' }]
-  };
+  let accounts = { assets: [], liabilities: [], revenue: [], expenses: [], equity: [] };
   
-  settingsRaw.forEach(row => {
-    if (row[0] === 'initialSetup') initialSetup = JSON.parse(row[1]);
-    if (row[0] === 'accounts') accounts = JSON.parse(row[1]);
-  });
+  // Settings 파싱
+  if (settingsRaw.length > 1) {
+    for (let i = 1; i < settingsRaw.length; i++) {
+      if (settingsRaw[i][0] === 'initialSetup') initialSetup = JSON.parse(settingsRaw[i][1]);
+      if (settingsRaw[i][0] === 'accounts') accounts = JSON.parse(settingsRaw[i][1]);
+    }
+  }
   
-  const transactions = [];
+  // Transactions 파싱
+  let transactions = [];
   if (transRaw.length > 1) {
     for (let i = 1; i < transRaw.length; i++) {
       try {
         transactions.push({
-          id: String(transRaw[i][0]),
+          id: transRaw[i][0],
           date: transRaw[i][1] instanceof Date ? Utilities.formatDate(transRaw[i][1], Session.getScriptTimeZone(), 'yyyy-MM-dd') : transRaw[i][1],
-          debits: JSON.parse(transRaw[i][2]),
-          credits: JSON.parse(transRaw[i][3]),
+          debits: JSON.parse(transRaw[i][2] || '[]'),
+          credits: JSON.parse(transRaw[i][3] || '[]'),
           memo: transRaw[i][4]
         });
       } catch (e) { console.error("Data parse error", e); }
     }
   }
-  return { initialSetup, accounts, transactions };
+
+  // Budgets 파싱 (신규 추가)
+  let budgets = [];
+  if (budgetRaw.length > 1) {
+    for (let i = 1; i < budgetRaw.length; i++) {
+      budgets.push({
+        id: budgetRaw[i][0],
+        yearMonth: budgetRaw[i][1], // 예: "2026-03"
+        account: budgetRaw[i][2],
+        content: budgetRaw[i][3],
+        amount: Number(budgetRaw[i][4]) || 0
+      });
+    }
+  }
+  
+  return { initialSetup, accounts, transactions, budgets };
 }
 
+// 예산 데이터 저장 (신규 추가)
+function saveBudgetData(yearMonth, currentMonthBudgets) {
+  const sheet = getSheet('Budgets');
+  const data = sheet.getDataRange().getValues();
+  
+  // 기존 데이터 중 해당 월(yearMonth)을 제외하고 새 배열에 담기
+  let newData = [data[0]]; // 헤더 유지
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][1] !== yearMonth) {
+      newData.push(data[i]);
+    }
+  }
+  
+  // 프론트엔드에서 넘어온 해당 월의 예산 데이터 덧붙이기
+  currentMonthBudgets.forEach(b => {
+    let newId = b.id || ('B-' + new Date().getTime() + Math.floor(Math.random() * 1000));
+    newData.push([newId, b.yearMonth, b.account, b.content, b.amount]);
+  });
+  
+  // 시트 비우고 덮어쓰기
+  sheet.clear();
+  sheet.getRange(1, 1, newData.length, newData[0].length).setValues(newData);
+  
+  return true;
+}
+
+// 기존 syncAllDataToSheet, addTransaction 등 함수 유지
 function syncAllDataToSheet(data) {
   const { initialSetup, accounts, transactions } = data;
-  
-  // 1. Settings 시트 일괄 저장
   const settingsSheet = getSheet('Settings');
   settingsSheet.clear();
-  
-  // 2차원 배열로 데이터 준비
   const settingsData = [
-    ['key', 'value'], // 헤더
+    ['key', 'value'],
     ['initialSetup', JSON.stringify(initialSetup)],
     ['accounts', JSON.stringify(accounts)]
   ];
-  
-  // setValues로 한 번에 입력
   settingsSheet.getRange(1, 1, settingsData.length, settingsData[0].length).setValues(settingsData);
   
-  // 2. Transactions 시트 일괄 저장 (여기가 핵심 성능 개선 구간)
   const transSheet = getSheet('Transactions');
   transSheet.clear();
-  
-  // 헤더 준비
   const header = ['id', 'date', 'debits', 'credits', 'memo'];
-  
-  // 거래내역이 있을 경우 map을 통해 2차원 배열로 변환
-  let transData = [header]; // 헤더 포함
-  
+  let transData = [header];
   if (transactions && transactions.length > 0) {
-    const bodyRows = transactions.map(t => [
-      t.id, 
-      t.date, 
-      JSON.stringify(t.debits), 
-      JSON.stringify(t.credits), 
-      t.memo
-    ]);
-    transData = transData.concat(bodyRows);
+    transactions.forEach(t => {
+      transData.push([t.id, t.date, JSON.stringify(t.debits), JSON.stringify(t.credits), t.memo]);
+    });
   }
-  
-  // 단 한 번의 API 호출로 모든 데이터 쓰기
   transSheet.getRange(1, 1, transData.length, transData[0].length).setValues(transData);
-  
   return true;
 }
