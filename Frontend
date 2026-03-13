@@ -82,7 +82,12 @@ const MonthlyExpenseReport = ({ accounts, transactions }) => {
   const expenseAccounts = useMemo(() => accounts?.expenses?.map(e => e.name) || [], [accounts]);
 
   const reportData = useMemo(() => {
-    const monthlyTx = transactions.filter(t => t.date.startsWith(targetMonth));
+    // 결산 관련 거래내역을 필터링하여 제외 (결산 전표 ID나 메모에 특정 키워드가 있는 경우 제외)
+    const monthlyTx = transactions.filter(t => {
+      const isClosingTx = (t.id && String(t.id).startsWith('CLOSE-')) || (t.memo && t.memo.includes('[결산'));
+      return t.date.startsWith(targetMonth) && !isClosingTx;
+    });
+    
     let map = {};
     let totalExp = 0;
 
@@ -108,8 +113,11 @@ const MonthlyExpenseReport = ({ accounts, transactions }) => {
       });
     });
 
-    // 지출 내역이 있는 계정만 필터링 후 오름차순 정렬
-    const activeAccounts = Object.keys(map).filter(acc => map[acc].lines.length > 0).sort();
+    // 지출 내역이 있는 계정만 필터링 후 합계(total) 금액 기준 내림차순 정렬
+    const activeAccounts = Object.keys(map)
+      .filter(acc => map[acc].lines.length > 0)
+      .sort((a, b) => map[b].total - map[a].total);
+
     activeAccounts.forEach(acc => {
       map[acc].lines.sort((a, b) => a.date.localeCompare(b.date));
     });
