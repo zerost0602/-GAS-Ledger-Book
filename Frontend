@@ -191,7 +191,7 @@ const MonthlyExpenseReport = ({ accounts, transactions }) => {
                       <table className="w-full text-left text-xs sm:text-sm">
                         <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-slate-100 bg-slate-50">
                           <tr>
-                            <th className="py-2 px-3 rounded-tl-lg w-24">날짜</th>
+                            <th className="py-2 px-3 rounded-tl-lg w-32 whitespace-nowrap">날짜</th>
                             <th className="py-2 px-3">거래내용</th>
                             <th className="py-2 px-3 text-right rounded-tr-lg w-28">금액</th>
                           </tr>
@@ -199,7 +199,7 @@ const MonthlyExpenseReport = ({ accounts, transactions }) => {
                         <tbody className="divide-y divide-slate-50">
                           {data.lines.map((line, idx) => (
                             <tr key={idx} className="hover:bg-slate-50 transition">
-                              <td className="py-2.5 px-3 text-slate-500 font-mono">{line.date}</td>
+                              <td className="py-2.5 px-3 text-slate-500 font-mono whitespace-nowrap">{line.date}</td>
                               <td className="py-2.5 px-3 text-slate-700 font-bold">{line.memo || '내역 없음'}</td>
                               <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800">{line.amount.toLocaleString()}원</td>
                             </tr>
