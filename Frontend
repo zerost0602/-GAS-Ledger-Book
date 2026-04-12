@@ -75,7 +75,7 @@ return (
 };
 
 // [추가된 컴포넌트] 월간지출명세
-const MonthlyExpenseReport = ({ accounts, transactions }) => {
+const MonthlyExpenseReport = ({ accounts, transactions, onEditTransaction }) => {
   const [targetMonth, setTargetMonth] = useState(new Date().toISOString().slice(0, 7));
   const [expandedAccounts, setExpandedAccounts] = useState({});
 
@@ -97,7 +97,7 @@ const MonthlyExpenseReport = ({ accounts, transactions }) => {
       (tx.debits || []).forEach(d => {
         if (expenseAccounts.includes(d.account)) {
           if (!map[d.account]) map[d.account] = { total: 0, lines: [] };
-          map[d.account].lines.push({ date: tx.date, memo: tx.memo, amount: d.amount });
+          map[d.account].lines.push({ txId: tx.id, date: tx.date, memo: tx.memo, amount: d.amount });
           map[d.account].total += d.amount;
           totalExp += d.amount;
         }
@@ -106,7 +106,7 @@ const MonthlyExpenseReport = ({ accounts, transactions }) => {
         if (expenseAccounts.includes(c.account)) {
           if (!map[c.account]) map[c.account] = { total: 0, lines: [] };
           // 대변에 비용이 발생한 경우(마이너스)
-          map[c.account].lines.push({ date: tx.date, memo: tx.memo, amount: -c.amount });
+          map[c.account].lines.push({ txId: tx.id, date: tx.date, memo: tx.memo, amount: -c.amount });
           map[c.account].total -= c.amount;
           totalExp -= c.amount;
         }
@@ -198,7 +198,7 @@ const MonthlyExpenseReport = ({ accounts, transactions }) => {
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                           {data.lines.map((line, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50 transition">
+                            <tr key={idx} onClick={() => line.txId && onEditTransaction && onEditTransaction(line.txId)} className={`transition ${line.txId && onEditTransaction ? 'cursor-pointer hover:bg-indigo-50 active:bg-indigo-100' : 'hover:bg-slate-50'}`}>
                               <td className="py-2.5 px-3 text-slate-500 font-mono whitespace-nowrap">{line.date}</td>
                               <td className="py-2.5 px-3 text-slate-700 font-bold">{line.memo || '내역 없음'}</td>
                               <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800">{line.amount.toLocaleString()}원</td>
@@ -642,7 +642,7 @@ return (
 {currentView === 'GL' && (
 <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-6 text-slate-800 pb-10">
 {['assets', 'liabilities', 'revenue', 'expenses'].map(cat => (
-<div key={cat} className="bg-white p-4 sm:p-6 rounded-2xl border shadow-sm h-fit"><h3 className="text-[10px] sm:text-xs font-black uppercase text-slate-400 mb-3 text-center tracking-widest">{cat.toUpperCase()} Accounts</h3><div className="space-y-1.5">{(accounts[cat] || []).map(a => (<div key={a.id} className="flex justify-between p-3 bg-slate-50 rounded-xl border border-transparent font-bold"><span className="text-xs sm:text-base">{a.name}</span><span className="font-mono text-sm sm:text-base">{(cat==='liabilities'||cat==='revenue' ? Math.abs(accountBalances[a.name] || 0) : accountBalances[a.name] || 0).toLocaleString()}원</span></div>))}</div></div>
+<div key={cat} className="bg-white p-4 sm:p-6 rounded-2xl border shadow-sm h-fit"><h3 className="text-[10px] sm:text-xs font-black uppercase text-slate-400 mb-3 text-center tracking-widest">{cat.toUpperCase()} Accounts</h3><div className="space-y-1.5">{(cat === 'liabilities' ? [...(accounts[cat] || []), {id: 'closing_temp', name: '결산(임시)'}] : (accounts[cat] || [])).map(a => (<div key={a.id} className="flex justify-between p-3 bg-slate-50 rounded-xl border border-transparent font-bold"><span className="text-xs sm:text-base">{a.name}</span><span className="font-mono text-sm sm:text-base">{(cat==='liabilities'||cat==='revenue' ? Math.abs(accountBalances[a.name] || 0) : accountBalances[a.name] || 0).toLocaleString()}원</span></div>))}</div></div>
 ))}
 </div>
 )}
@@ -652,6 +652,14 @@ return (
   <MonthlyExpenseReport 
     accounts={accounts} 
     transactions={transactions} 
+    onEditTransaction={(txId) => {
+      const tx = transactions.find(t => t.id === txId);
+      if(tx) {
+        setEditingTransaction(tx);
+        setEntryRows({ date: tx.date, debits: tx.debits, credits: tx.credits, memo: tx.memo });
+        setIsEntryModalOpen(true);
+      }
+    }}
   />
 )}
 
