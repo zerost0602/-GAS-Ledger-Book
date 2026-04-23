@@ -80,61 +80,103 @@ function getAllData() {
 
 // 예산 데이터만 별도로 저장하는 함수
 function saveBudgetData(yearMonth, currentMonthBudgets) {
-  const sheet = getSheet('Budgets');
-  const data = sheet.getDataRange().getValues();
-  
-  let newData = [data[0]]; 
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][1] !== yearMonth) {
-      newData.push(data[i]);
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const sheet = getSheet('Budgets');
+    const data = sheet.getDataRange().getValues();
+    
+    let newData = [data[0]]; 
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][1] !== yearMonth) {
+        newData.push(data[i]);
+      }
     }
-  }
-  
-  currentMonthBudgets.forEach(b => {
-    let newId = b.id || ('B-' + new Date().getTime() + Math.floor(Math.random() * 1000));
-    newData.push([newId, b.yearMonth, b.account, b.content, b.amount]);
-  });
-  
-  sheet.clear();
-  sheet.getRange(1, 1, newData.length, newData[0].length).setValues(newData);
-  
-  return true;
+    
+    currentMonthBudgets.forEach(b => {
+      let newId = b.id || ('B-' + new Date().getTime() + Math.floor(Math.random() * 1000));
+      newData.push([newId, b.yearMonth, b.account, b.content, b.amount]);
+    });
+    
+    sheet.clear();
+    sheet.getRange(1, 1, newData.length, newData[0].length).setValues(newData);
+    
+    return true;
+  } catch(e) { return false; } finally { lock.releaseLock(); }
 }
 
-function syncAllDataToSheet(data) {
-  const { initialSetup, accounts, transactions } = data;
-  
-  // 1. Settings 시트 일괄 저장
-  const settingsSheet = getSheet('Settings');
-  settingsSheet.clear();
-  
-  const settingsData = [
-    ['key', 'value'],
-    ['initialSetup', JSON.stringify(initialSetup)],
-    ['accounts', JSON.stringify(accounts)]
-  ];
-  
-  settingsSheet.getRange(1, 1, settingsData.length, settingsData[0].length).setValues(settingsData);
-  
-  // 2. Transactions 시트 일괄 저장
-  const transSheet = getSheet('Transactions');
-  transSheet.clear();
-  
-  const header = ['id', 'date', 'debits', 'credits', 'memo'];
-  let transData = [header];
-  
-  if (transactions && transactions.length > 0) {
-    const bodyRows = transactions.map(t => [
-      t.id, 
-      t.date, 
-      JSON.stringify(t.debits), 
-      JSON.stringify(t.credits), 
-      t.memo
-    ]);
-    transData = transData.concat(bodyRows);
+function saveTransaction(tx) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const sheet = getSheet('Transactions');
+    const data = sheet.getDataRange().getValues();
+    
+    let rowIndex = -1;
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === String(tx.id)) {
+        rowIndex = i + 1;
+        break;
+      }
+    }
+    
+    const rowData = [
+      tx.id,
+      tx.date,
+      JSON.stringify(tx.debits),
+      JSON.stringify(tx.credits),
+      tx.memo
+    ];
+    
+    if (rowIndex > -1) {
+      sheet.getRange(rowIndex, 1, 1, 5).setValues([rowData]);
+    } else {
+      sheet.appendRow(rowData);
+    }
+    return true;
+  } catch (e) {
+    return false;
+  } finally {
+    lock.releaseLock();
   }
-  
-  transSheet.getRange(1, 1, transData.length, transData[0].length).setValues(transData);
-  
-  return true;
+}
+
+function deleteTransaction(id) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const sheet = getSheet('Transactions');
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === String(id)) {
+        sheet.deleteRow(i + 1);
+        return true;
+      }
+    }
+    return false;
+  } catch (e) {
+    return false;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function saveSettings(settingsData) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const sheet = getSheet('Settings');
+    sheet.clear();
+    const data = [
+      ['key', 'value'],
+      ['initialSetup', JSON.stringify(settingsData.initialSetup)],
+      ['accounts', JSON.stringify(settingsData.accounts)]
+    ];
+    sheet.getRange(1, 1, data.length, data[0].length).setValues(data);
+    return true;
+  } catch (e) {
+    return false;
+  } finally {
+    lock.releaseLock();
+  }
 }
