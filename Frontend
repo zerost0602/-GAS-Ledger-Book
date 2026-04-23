@@ -399,6 +399,7 @@ const App = () => {
   const [draggedAccountId, setDraggedAccountId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchDateRange, setSearchDateRange] = useState({ start: '', end: '' });
+  const [isSavingEntry, setIsSavingEntry] = useState(false);
 
   useEffect(() => { if (statusMessage) { const t = setTimeout(() => setStatusMessage(null), 3000); return () => clearTimeout(t); } }, [statusMessage]);
   useEffect(() => { setTimeout(() => lucide.createIcons(), 50); });
@@ -526,16 +527,21 @@ const App = () => {
 
   const handleSaveEntry = async () => {
     if (totalDebitSum !== totalCreditSum || totalDebitSum === 0) return;
-    const newTransaction = {
-      id: editingTransaction ? editingTransaction.id : `T-${Date.now()}`,
-      date: entryRows.date,
-      debits: entryRows.debits.filter(d => d.accountId && d.amount > 0),
-      credits: entryRows.credits.filter(c => c.accountId && c.amount > 0),
-      memo: entryRows.memo || '거래 내역'
-    };
-    await saveTransaction(newTransaction);
-    setIsEntryModalOpen(false); setEditingTransaction(null);
-    setEntryRows({ date: new Date().toISOString().split('T')[0], debits: [{ accountId: '', amount: 0 }], credits: [{ accountId: '', amount: 0 }], memo: '' });
+    setIsSavingEntry(true);
+    try {
+      const newTransaction = {
+        id: editingTransaction ? editingTransaction.id : `T-${Date.now()}`,
+        date: entryRows.date,
+        debits: entryRows.debits.filter(d => d.accountId && d.amount > 0),
+        credits: entryRows.credits.filter(c => c.accountId && c.amount > 0),
+        memo: entryRows.memo || '거래 내역'
+      };
+      await saveTransaction(newTransaction);
+      setIsEntryModalOpen(false); setEditingTransaction(null);
+      setEntryRows({ date: new Date().toISOString().split('T')[0], debits: [{ accountId: '', amount: 0 }], credits: [{ accountId: '', amount: 0 }], memo: '' });
+    } finally {
+      setIsSavingEntry(false);
+    }
   };
 
   const handleClosing = () => {
@@ -1001,7 +1007,13 @@ const App = () => {
               <input type="text" className="w-full bg-white p-2.5 rounded-xl border border-slate-200 outline-none font-bold placeholder:text-slate-300 text-slate-700 text-xs sm:text-base" placeholder="거래 메모를 입력하세요 (예: 식비 결제)" value={entryRows.memo} onChange={(e) => setEntryRows({...entryRows, memo: e.target.value})} />
               <div className="flex items-center justify-between gap-4">
                 <span className={`px-4 py-2 rounded-full text-[10px] font-black uppercase shadow-sm ${totalDebitSum === totalCreditSum && totalDebitSum > 0 ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>{totalDebitSum === totalCreditSum && totalDebitSum > 0 ? '차대일치' : '불일치'}</span>
-                <button onClick={handleSaveEntry} disabled={totalDebitSum !== totalCreditSum || totalDebitSum === 0} className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white px-6 py-3 rounded-xl font-black shadow-lg transition-all active:scale-95 text-xs sm:text-sm whitespace-nowrap">전표 저장하기</button>
+                <button onClick={handleSaveEntry} disabled={isSavingEntry || totalDebitSum !== totalCreditSum || totalDebitSum === 0} className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white px-6 py-3 rounded-xl font-black shadow-lg transition-all active:scale-95 text-xs sm:text-sm whitespace-nowrap">
+                  {isSavingEntry ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <i data-lucide="loader-2" className="w-4 h-4 animate-spin"></i> 저장 중...
+                    </span>
+                  ) : "전표 저장하기"}
+                </button>
               </div>
             </div>
           </div>
