@@ -194,8 +194,8 @@ const useAccounting = () => {
 
     return {
       initialSetup: {
-        debits: (rawData.initialSetup?.debits || []).map(d => ({ accountId: resolveId(d), amount: d.amount })),
-        credits: (rawData.initialSetup?.credits || []).map(c => ({ accountId: resolveId(c), amount: c.amount }))
+        debits: (rawData.initialSetup?.debits || []).map(d => ({ accountId: resolveId(d), amount: d.amount, tag: d.tag || '' })),
+        credits: (rawData.initialSetup?.credits || []).map(c => ({ accountId: resolveId(c), amount: c.amount, tag: c.tag || '' }))
       },
       accounts: accs,
       transactions: (rawData.transactions || []).map(tx => ({
@@ -224,8 +224,8 @@ const useAccounting = () => {
         
         const mockRes = {
           initialSetup: {
-            debits: [{ accountId: 'a1', amount: 5000000 }, { accountId: 'a2', amount: 500000 }],
-            credits: [{ accountId: 'e1', amount: 5500000 }]
+            debits: [{ accountId: 'a1', amount: 5000000, tag: '이체' }, { accountId: 'a2', amount: 500000, tag: '비상금' }],
+            credits: [{ accountId: 'e1', amount: 5500000, tag: '' }]
           },
           accounts: {
             assets: [
@@ -1335,6 +1335,21 @@ const App = () => {
     const balances = {};
     flatAccounts.forEach(a => balances[a.id] = { tags: {} });
     balances['closing_temp'] = { tags: {} };
+    
+    // 기초 잔액의 태그별 금액 반영
+    (initialSetup.debits || []).forEach(d => {
+      if (d.accountId && d.tag) {
+        if (!balances[d.accountId]) balances[d.accountId] = { tags: {} };
+        balances[d.accountId].tags[d.tag] = (balances[d.accountId].tags[d.tag] || 0) + Number(d.amount || 0);
+      }
+    });
+    (initialSetup.credits || []).forEach(c => {
+      if (c.accountId && c.tag) {
+        if (!balances[c.accountId]) balances[c.accountId] = { tags: {} };
+        balances[c.accountId].tags[c.tag] = (balances[c.accountId].tags[c.tag] || 0) - Number(c.amount || 0);
+      }
+    });
+
     allBsTransactions.forEach(t => {
       t.debits.forEach(d => {
         if (!balances[d.accountId]) balances[d.accountId] = { tags: {} };
@@ -1346,7 +1361,7 @@ const App = () => {
       });
     });
     return balances;
-  }, [allBsTransactions, flatAccounts]);
+  }, [allBsTransactions, flatAccounts, initialSetup]);
 
   const revenueHierarchy = useMemo(() => {
     const subtypes = ['fixed', 'variable'];
@@ -1899,14 +1914,38 @@ const App = () => {
                   <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col shadow-sm">
                     <div className="bg-indigo-600 text-white p-2 text-center text-[10px] font-black uppercase">Debit (차변 - 기초 자산)</div>
                     <div className="p-3 space-y-2 min-h-[150px] flex-1">
-                      ${(initialSetup.debits || []).map((r, i) => html`
-                        <div key=${i} className="flex gap-2 items-center">
-                          <button onClick=${() => setActivePicker({ type: 'setupDebits', index: i })} className="flex-1 p-2.5 rounded-lg bg-slate-50 text-[11px] font-bold border border-slate-100 text-left truncate">${r.accountId ? getAccountById(r.accountId).name : '자산 선택'}</button>
-                          <input type="number" className="w-20 sm:w-28 p-2 rounded-lg bg-white text-right font-black border border-slate-200 text-indigo-600 text-xs sm:text-sm outline-none" value=${r.amount || ''} onChange=${(e) => { const val = Number(e.target.value); setData(prev => { const n = [...prev.initialSetup.debits]; n[i] = { ...n[i], amount: val }; return { ...prev, initialSetup: { ...prev.initialSetup, debits: n } }; }); setIsDirty(true); }} />
-                          <button onClick=${()=>{ setData(prev => { const n = [...prev.initialSetup.debits]; if (n.length > 1) n.splice(i, 1); return { ...prev, initialSetup: { ...prev.initialSetup, debits: n } }; }); setIsDirty(true); }} className="text-slate-300 hover:text-red-500 p-1"><${TrashIcon}/></button>
-                        </div>
-                      `)}
-                      <button onClick=${() => { setData(prev => ({ ...prev, initialSetup: { ...prev.initialSetup, debits: [...(prev.initialSetup.debits || []), { accountId: '', amount: 0 }] } })); setIsDirty(true); }} className="w-full p-2 mt-2 text-[10px] font-black text-indigo-500 border border-dashed border-indigo-200 rounded-lg hover:bg-indigo-50">+ 자산 추가</button>
+                      ${(initialSetup.debits || []).map((r, i) => {
+                        const account = r.accountId ? getAccountById(r.accountId) : null;
+                        const availableTags = [...(account?.tags || [])];
+                        if (r.tag && !availableTags.includes(r.tag)) {
+                          availableTags.push(r.tag);
+                        }
+                        return html`
+                          <div key=${i} className="flex gap-2 items-center">
+                            <button onClick=${() => setActivePicker({ type: 'setupDebits', index: i })} className="flex-1 p-2.5 rounded-lg bg-slate-50 text-[11px] font-bold border border-slate-100 text-left truncate">${account ? account.name : '자산 선택'}</button>
+                            <select 
+                              value=${r.tag || ''} 
+                              onChange=${(e) => {
+                                const val = e.target.value;
+                                setData(prev => {
+                                  const n = [...prev.initialSetup.debits];
+                                  n[i] = { ...n[i], tag: val };
+                                  return { ...prev, initialSetup: { ...prev.initialSetup, debits: n } };
+                                });
+                                setIsDirty(true);
+                              }}
+                              disabled=${!r.accountId}
+                              className="w-24 sm:w-28 p-2 rounded-lg bg-white border border-slate-200 text-xs font-bold outline-none text-slate-700 disabled:opacity-50"
+                            >
+                              <option value="">태그 없음</option>
+                              ${availableTags.map(t => html`<option key=${t} value=${t}>${t}</option>`)}
+                            </select>
+                            <input type="number" className="w-20 sm:w-28 p-2 rounded-lg bg-white text-right font-black border border-slate-200 text-indigo-600 text-xs sm:text-sm outline-none" value=${r.amount || ''} onChange=${(e) => { const val = Number(e.target.value); setData(prev => { const n = [...prev.initialSetup.debits]; n[i] = { ...n[i], amount: val }; return { ...prev, initialSetup: { ...prev.initialSetup, debits: n } }; }); setIsDirty(true); }} />
+                            <button onClick=${()=>{ setData(prev => { const n = [...prev.initialSetup.debits]; if (n.length > 1) n.splice(i, 1); return { ...prev, initialSetup: { ...prev.initialSetup, debits: n } }; }); setIsDirty(true); }} className="text-slate-300 hover:text-red-500 p-1"><${TrashIcon}/></button>
+                          </div>
+                        `;
+                      })}
+                      <button onClick=${() => { setData(prev => ({ ...prev, initialSetup: { ...prev.initialSetup, debits: [...(prev.initialSetup.debits || []), { accountId: '', amount: 0, tag: '' }] } })); setIsDirty(true); }} className="w-full p-2 mt-2 text-[10px] font-black text-indigo-500 border border-dashed border-indigo-200 rounded-lg hover:bg-indigo-50">+ 자산 추가</button>
                     </div>
                     <div className="bg-slate-50 p-3 flex justify-between font-black border-t text-xs"><span className="text-[9px] uppercase text-slate-400">Sum of Assets</span><span className="font-mono text-indigo-600 font-black">${setupTotalDebits.toLocaleString()}원</span></div>
                   </div>
@@ -1940,15 +1979,37 @@ const App = () => {
                       <div className="text-[9px] font-black text-slate-300 uppercase tracking-widest pt-1 border-t mb-1">기초 부채 내역</div>
                       ${(initialSetup.credits || []).filter(r => String(r.accountId) !== String(retainedEarningsId)).map((r, i) => {
                         const originalIndex = initialSetup.credits.findIndex(c => c === r);
+                        const account = r.accountId ? getAccountById(r.accountId) : null;
+                        const availableTags = [...(account?.tags || [])];
+                        if (r.tag && !availableTags.includes(r.tag)) {
+                          availableTags.push(r.tag);
+                        }
                         return html`
                           <div key=${originalIndex} className="flex gap-2 items-center">
-                            <button onClick=${() => setActivePicker({ type: 'setupCredits', index: originalIndex })} className="flex-1 p-2.5 rounded-lg bg-slate-50 text-[11px] font-bold border border-slate-100 text-left truncate">${r.accountId ? getAccountById(r.accountId).name : '부채 선택'}</button>
+                            <button onClick=${() => setActivePicker({ type: 'setupCredits', index: originalIndex })} className="flex-1 p-2.5 rounded-lg bg-slate-50 text-[11px] font-bold border border-slate-100 text-left truncate">${account ? account.name : '부채 선택'}</button>
+                            <select 
+                              value=${r.tag || ''} 
+                              onChange=${(e) => {
+                                const val = e.target.value;
+                                setData(prev => {
+                                  const n = [...prev.initialSetup.credits];
+                                  n[originalIndex] = { ...n[originalIndex], tag: val };
+                                  return { ...prev, initialSetup: { ...prev.initialSetup, credits: n } };
+                                });
+                                setIsDirty(true);
+                              }}
+                              disabled=${!r.accountId}
+                              className="w-24 sm:w-28 p-2 rounded-lg bg-white border border-slate-200 text-xs font-bold outline-none text-slate-700 disabled:opacity-50"
+                            >
+                              <option value="">태그 없음</option>
+                              ${availableTags.map(t => html`<option key=${t} value=${t}>${t}</option>`)}
+                            </select>
                             <input type="number" className="w-20 sm:w-28 p-2 rounded-lg bg-white text-right font-black border border-slate-200 text-red-500 text-xs outline-none" value=${r.amount || ''} onChange=${(e) => { const val = Number(e.target.value); setData(prev => { const n = [...prev.initialSetup.credits]; n[originalIndex] = { ...n[originalIndex], amount: val }; return { ...prev, initialSetup: { ...prev.initialSetup, credits: n } }; }); setIsDirty(true); }} />
                             <button onClick=${()=>{ setData(prev => { const n = [...prev.initialSetup.credits]; n.splice(originalIndex, 1); return { ...prev, initialSetup: { ...prev.initialSetup, credits: n } }; }); setIsDirty(true); }} className="text-slate-300 hover:text-red-500 p-1"><${TrashIcon}/></button>
                           </div>
                         `;
                       })}
-                      <button onClick=${() => { setData(prev => ({ ...prev, initialSetup: { ...prev.initialSetup, credits: [...(prev.initialSetup.credits || []), { accountId: '', amount: 0 }] } })); setIsDirty(true); }} className="w-full p-2 mt-1 text-[10px] font-black text-red-400 border border-dashed border-red-100 rounded-lg hover:bg-red-50">+ 부채 추가</button>
+                      <button onClick=${() => { setData(prev => ({ ...prev, initialSetup: { ...prev.initialSetup, credits: [...(prev.initialSetup.credits || []), { accountId: '', amount: 0, tag: '' }] } })); setIsDirty(true); }} className="w-full p-2 mt-1 text-[10px] font-black text-red-400 border border-dashed border-red-100 rounded-lg hover:bg-red-50">+ 부채 추가</button>
                     </div>
                   </div>
                 </div>
