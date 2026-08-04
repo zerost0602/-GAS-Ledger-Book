@@ -200,6 +200,7 @@ const useAccounting = () => {
       accounts: accs,
       transactions: (rawData.transactions || []).map(tx => ({
         ...tx,
+        vendor: tx.vendor || '',
         debits: tx.debits.map(d => ({ accountId: resolveId(d), amount: d.amount, tag: d.tag || '' })),
         credits: tx.credits.map(c => ({ accountId: resolveId(c), amount: c.amount, tag: c.tag || '' }))
       })),
@@ -253,6 +254,7 @@ const useAccounting = () => {
               date: `${currentMonth}-01`,
               debits: [{ accountId: 'x3', amount: 500000, tag: '월세' }],
               credits: [{ accountId: 'a1', amount: 500000, tag: '이체' }],
+              vendor: 'LH공사',
               memo: '월세 납부'
             },
             {
@@ -260,6 +262,7 @@ const useAccounting = () => {
               date: `${currentMonth}-02`,
               debits: [{ accountId: 'x1', amount: 12000, tag: '외식' }],
               credits: [{ accountId: 'l1', amount: 12000, tag: '일시불' }],
+              vendor: '스타벅스',
               memo: '점심 식사'
             },
             {
@@ -267,6 +270,7 @@ const useAccounting = () => {
               date: `${currentMonth}-03`,
               debits: [{ accountId: 'x1', amount: 45000, tag: '식재료' }],
               credits: [{ accountId: 'l1', amount: 45000, tag: '일시불' }],
+              vendor: '이마트',
               memo: '마트 장보기'
             },
             {
@@ -274,6 +278,7 @@ const useAccounting = () => {
               date: `${currentMonth}-04`,
               debits: [{ accountId: 'x2', amount: 65000, tag: '지하철' }],
               credits: [{ accountId: 'a1', amount: 65000, tag: '이체' }],
+              vendor: '서울교통공사',
               memo: '교통카드 충전'
             },
             {
@@ -281,6 +286,7 @@ const useAccounting = () => {
               date: `${currentMonth}-05`,
               debits: [{ accountId: 'a1', amount: 2500000, tag: '이체' }],
               credits: [{ accountId: 'r1', amount: 2500000, tag: '기본급' }],
+              vendor: '(주)테크회사',
               memo: '월급 입금'
             },
             // Last month transactions
@@ -289,6 +295,7 @@ const useAccounting = () => {
               date: `${lastMonth}-01`,
               debits: [{ accountId: 'x3', amount: 500000, tag: '월세' }],
               credits: [{ accountId: 'a1', amount: 500000, tag: '이체' }],
+              vendor: 'LH공사',
               memo: '지난달 월세 납부'
             },
             {
@@ -296,6 +303,7 @@ const useAccounting = () => {
               date: `${lastMonth}-15`,
               debits: [{ accountId: 'x1', amount: 250000, tag: '외식' }],
               credits: [{ accountId: 'l1', amount: 250000, tag: '일시불' }],
+              vendor: '빕스',
               memo: '외식비 통합 지출'
             }
           ],
@@ -432,7 +440,7 @@ const MonthlyIncomeExpenseReport = ({ accounts, transactions, getAccountById, on
         if (targetAccountIds.includes(d.accountId)) {
           if (!map[d.accountId]) map[d.accountId] = { total: 0, lines: [] };
           const amt = reportType === 'revenue' ? -d.amount : d.amount;
-          map[d.accountId].lines.push({ txId: tx.id, date: tx.date, memo: tx.memo, amount: amt, tag: d.tag || '' });
+          map[d.accountId].lines.push({ txId: tx.id, date: tx.date, memo: tx.memo, vendor: tx.vendor || '', amount: amt, tag: d.tag || '' });
           map[d.accountId].total += amt;
           totalVal += amt;
         }
@@ -441,7 +449,7 @@ const MonthlyIncomeExpenseReport = ({ accounts, transactions, getAccountById, on
         if (targetAccountIds.includes(c.accountId)) {
           if (!map[c.accountId]) map[c.accountId] = { total: 0, lines: [] };
           const amt = reportType === 'revenue' ? c.amount : -c.amount;
-          map[c.accountId].lines.push({ txId: tx.id, date: tx.date, memo: tx.memo, amount: amt, tag: c.tag || '' });
+          map[c.accountId].lines.push({ txId: tx.id, date: tx.date, memo: tx.memo, vendor: tx.vendor || '', amount: amt, tag: c.tag || '' });
           map[c.accountId].total += amt;
           totalVal += amt;
         }
@@ -572,6 +580,7 @@ const MonthlyIncomeExpenseReport = ({ accounts, transactions, getAccountById, on
                       <tr key=${idx} onClick=${() => line.txId && onEditTransaction && onEditTransaction(line.txId)} className=${`transition ${line.txId && onEditTransaction ? 'cursor-pointer hover:bg-indigo-50 active:bg-indigo-100' : 'hover:bg-slate-50'}`}>
                         <td className="py-2 px-1.5 sm:py-2.5 sm:px-3 text-slate-500 font-mono text-[10px] sm:text-xs whitespace-nowrap truncate">${line.date}</td>
                         <td className="py-2 px-1.5 sm:py-2.5 sm:px-3 text-slate-700 font-bold text-[10px] sm:text-sm leading-tight" style=${{ wordBreak: 'keep-all', overflowWrap: 'break-word' }}>
+                          ${line.vendor && html`<span className="inline-block bg-slate-100 text-slate-600 font-bold text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded mr-1.5 shadow-xs border border-slate-200">${line.vendor}</span>`}
                           ${line.memo || '내역 없음'}
                           ${line.tag && html`<br /><span className="text-[9px] sm:text-xs text-slate-400 font-normal">#${line.tag}</span>`}
                         </td>
@@ -773,7 +782,10 @@ const MonthlyCalendar = ({ accounts, transactions, getAccountById, onEditTransac
         <div className="space-y-3 modal-scroll max-h-[60vh] overflow-y-auto pr-2">
           ${selectedDate && dailyData[selectedDate] && dailyData[selectedDate].txs.map(tx => html`
             <div key=${tx.id} onClick=${() => { onEditTransaction(tx.id); setSelectedDate(null); }} className="p-3 border border-slate-100 bg-slate-50 rounded-xl hover:bg-indigo-50 hover:border-indigo-200 transition-all cursor-pointer shadow-sm">
-              <div className="font-bold text-slate-700 mb-2">${tx.memo || '내역 없음'}</div>
+              <div className="font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                ${tx.vendor && html`<span className="bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] px-2 py-0.5 rounded-md font-extrabold shrink-0">${tx.vendor}</span>`}
+                <span>${tx.memo || '내역 없음'}</span>
+              </div>
               <div className="grid grid-cols-2 gap-3 text-[11px] sm:text-xs bg-white p-2 rounded-lg border border-slate-100">
                 <div>
                   <div className="text-[9px] text-slate-400 uppercase font-black mb-1">차변 (Debit)</div>
@@ -815,12 +827,6 @@ const MonthlyBudgetReport = ({ accounts, transactions, budgets = {}, saveBudget 
   const activeBudget = useMemo(() => {
     if (budgets[targetMonth]) {
       return budgets[targetMonth];
-    }
-    // Carry over from the latest month available
-    const keys = Object.keys(budgets).sort();
-    const prevKeys = keys.filter(k => k < targetMonth);
-    if (prevKeys.length > 0) {
-      return budgets[prevKeys[prevKeys.length - 1]];
     }
     return {};
   }, [budgets, targetMonth]);
@@ -981,6 +987,29 @@ const MonthlyBudgetReport = ({ accounts, transactions, budgets = {}, saveBudget 
     if (window.lucide) window.lucide.createIcons();
   }, [targetMonth, isEditModalOpen, editRows, activeBudgetPicker]);
 
+  const handleCopyLastMonthBudget = () => {
+    const keys = Object.keys(budgets).sort();
+    const prevKeys = keys.filter(k => k < targetMonth);
+    if (prevKeys.length === 0) {
+      alert('복사할 이전 달 예산 데이터가 없습니다.');
+      return;
+    }
+    const lastMonthKey = prevKeys[prevKeys.length - 1];
+    const lastMonthBudget = budgets[lastMonthKey] || {};
+    
+    const copiedRows = [];
+    Object.keys(lastMonthBudget).forEach(key => {
+      if (key !== 'other' && lastMonthBudget[key] > 0) {
+        copiedRows.push({
+          accountId: key,
+          amount: lastMonthBudget[key]
+        });
+      }
+    });
+    setEditRows(copiedRows);
+    setEditOtherAmount(lastMonthBudget['other'] || 0);
+  };
+
   return html`
     <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-300 pb-10 text-slate-800">
       <div className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1129,8 +1158,13 @@ const MonthlyBudgetReport = ({ accounts, transactions, budgets = {}, saveBudget 
 
       <${Modal} isOpen=${isEditModalOpen} onClose=${() => setIsEditModalOpen(false)} title="${targetMonth} 예산 수정" maxWidth="max-w-4xl" zIndex="z-[110]">
         <div className="space-y-4">
-          <div className="text-xs text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-100 mb-2 font-medium leading-relaxed">
-            각 비용 계정과목의 한 달 예산을 설정하세요. 여기에 명시하지 않은 모든 비용 항목은 자동 계산되어 <strong>기타비용</strong>에 합산됩니다.
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100 mb-2">
+            <div className="text-xs text-slate-500 font-medium leading-relaxed">
+              각 비용 계정과목의 한 달 예산을 설정하세요. 명시하지 않은 항목은 <strong>기타비용</strong>에 합산됩니다.
+            </div>
+            <${Button} variant="secondary" onClick=${handleCopyLastMonthBudget} className="shrink-0 text-xs font-bold py-1.5 px-3 border-indigo-200 text-indigo-700 hover:bg-indigo-50 active:scale-95 transition-all">
+              <i data-lucide="copy" className="w-3.5 h-3.5"></i> 저번달 복사
+            <//>
           </div>
 
           <div className="max-h-[50vh] overflow-y-auto modal-scroll pr-2 space-y-2 pb-2">
@@ -1230,6 +1264,7 @@ const App = () => {
     date: new Date().toISOString().split('T')[0],
     debits: [{ accountId: '', amount: 0 }],
     credits: [{ accountId: '', amount: 0 }],
+    vendor: '',
     memo: ''
   });
 
@@ -1498,11 +1533,12 @@ const App = () => {
         date: entryRows.date,
         debits: entryRows.debits.filter(d => d.accountId && d.amount > 0).map(d => ({ accountId: d.accountId, amount: d.amount, tag: d.tag || '' })),
         credits: entryRows.credits.filter(c => c.accountId && c.amount > 0).map(c => ({ accountId: c.accountId, amount: c.amount, tag: c.tag || '' })),
+        vendor: entryRows.vendor || '',
         memo: entryRows.memo || '거래 내역'
       };
       await saveTransaction(newTransaction);
       setIsEntryModalOpen(false); setEditingTransaction(null);
-      setEntryRows({ date: new Date().toISOString().split('T')[0], debits: [{ accountId: '', amount: 0, tag: '' }], credits: [{ accountId: '', amount: 0, tag: '' }], memo: '' });
+      setEntryRows({ date: new Date().toISOString().split('T')[0], debits: [{ accountId: '', amount: 0, tag: '' }], credits: [{ accountId: '', amount: 0, tag: '' }], vendor: '', memo: '' });
     } finally {
       setIsSavingEntry(false);
     }
@@ -1622,6 +1658,7 @@ const App = () => {
       if (searchDateRange.end && t.date > searchDateRange.end) return false;
       if (!term) return true;
       if (t.memo && t.memo.toLowerCase().includes(term)) return true;
+      if (t.vendor && t.vendor.toLowerCase().includes(term)) return true;
       if (t.date.includes(term)) return true;
       const dMatch = t.debits.some(d => (getAccountById(d.accountId)?.name.toLowerCase().includes(term)) || (d.tag && d.tag.toLowerCase().includes(term)));
       const cMatch = t.credits.some(c => (getAccountById(c.accountId)?.name.toLowerCase().includes(term)) || (c.tag && c.tag.toLowerCase().includes(term)));
@@ -1689,7 +1726,7 @@ const App = () => {
             <${Button} variant="secondary" onClick=${handleClosing} className="text-[11px] sm:text-sm px-3 sm:px-5">
               <i data-lucide="calculator" className="w-3.5 h-3.5 sm:w-4 sm:h-4"></i><span>결산 실행</span>
             <//>
-            <${Button} onClick=${() => { setEntryRows({ date: standardDate, debits: [{ accountId: '', amount: 0 }], credits: [{ accountId: '', amount: 0 }], memo: '' }); setIsEntryModalOpen(true); }} className="text-[11px] sm:text-sm px-3 sm:px-5">
+            <${Button} onClick=${() => { setEntryRows({ date: standardDate, debits: [{ accountId: '', amount: 0 }], credits: [{ accountId: '', amount: 0 }], vendor: '', memo: '' }); setIsEntryModalOpen(true); }} className="text-[11px] sm:text-sm px-3 sm:px-5">
               <i data-lucide="plus-circle" className="w-3.5 h-3.5 sm:w-4 sm:h-4"></i><span>거래 입력</span>
             <//>
           </div>
@@ -1705,7 +1742,7 @@ const App = () => {
                 const tx = transactions.find(t => t.id === txId);
                 if(tx) { 
                   setEditingTransaction(tx); 
-                  setEntryRows({ date: tx.date, debits: tx.debits, credits: tx.credits, memo: tx.memo }); 
+                  setEntryRows({ date: tx.date, debits: tx.debits, credits: tx.credits, vendor: tx.vendor || '', memo: tx.memo }); 
                   setIsEntryModalOpen(true); 
                 }
               }} 
@@ -1853,9 +1890,12 @@ const App = () => {
                   <div className="p-5 space-y-3">
                     ${filteredTxs.length === 0 && html`<p className="text-center text-slate-400 py-8 text-sm">검색 결과가 없습니다.</p>`}
                     ${filteredTxs.map(t => html`
-                      <div key=${t.id} onClick=${()=>{setEditingTransaction(t); setEntryRows({date:t.date, debits:t.debits, credits:t.credits, memo:t.memo}); setIsEntryModalOpen(true);}} className="p-4 border border-slate-100 bg-slate-50 rounded-xl hover:shadow-md transition-shadow cursor-pointer">
+                      <div key=${t.id} onClick=${()=>{setEditingTransaction(t); setEntryRows({date:t.date, debits:t.debits, credits:t.credits, vendor:t.vendor||'', memo:t.memo}); setIsEntryModalOpen(true);}} className="p-4 border border-slate-100 bg-slate-50 rounded-xl hover:shadow-md transition-shadow cursor-pointer">
                         <div className="text-xs text-slate-400 font-black mb-1">${t.date}</div>
-                        <div className="font-bold text-slate-700 mb-3">${t.memo || '내역 없음'}</div>
+                        <div className="font-bold text-slate-700 mb-3 flex items-center gap-1.5">
+                          ${t.vendor && html`<span className="bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] px-2 py-0.5 rounded-md font-extrabold shrink-0">${t.vendor}</span>`}
+                          <span>${t.memo || '내역 없음'}</span>
+                        </div>
                         <div className="grid grid-cols-2 gap-4 text-sm bg-white p-3 rounded-lg border border-slate-100">
                           <div>
                             <div className="text-[10px] text-slate-400 uppercase font-black mb-1 border-b pb-1">차변 (Debit)</div>
@@ -1883,7 +1923,7 @@ const App = () => {
           ${currentView === 'EXPENSE_REPORT' && html`
             <${MonthlyIncomeExpenseReport} accounts=${accounts} transactions=${transactions} getAccountById=${getAccountById} onEditTransaction=${(txId) => {
               const tx = transactions.find(t => t.id === txId);
-              if(tx) { setEditingTransaction(tx); setEntryRows({ date: tx.date, debits: tx.debits, credits: tx.credits, memo: tx.memo }); setIsEntryModalOpen(true); }
+              if(tx) { setEditingTransaction(tx); setEntryRows({ date: tx.date, debits: tx.debits, credits: tx.credits, vendor: tx.vendor || '', memo: tx.memo }); setIsEntryModalOpen(true); }
             }} />
           `}
 
@@ -2172,8 +2212,14 @@ const App = () => {
                 </div>
                 <div className="space-y-2">
                   ${transactions.filter(t => t.date >= editRange.start && t.date <= editRange.end).sort((a,b) => b.date.localeCompare(a.date)).map(t => html`
-                    <div key=${t.id} onClick=${()=>{setEditingTransaction(t); setEntryRows({date:t.date, debits:t.debits, credits:t.credits, memo:t.memo}); setIsEntryModalOpen(true);}} className="p-3.5 bg-white border rounded-xl flex justify-between cursor-pointer hover:border-indigo-500 transition-all shadow-sm active:bg-indigo-50">
-                      <div><p className="text-[9px] font-black text-slate-400 uppercase">${t.date}</p><p className="font-bold text-xs text-slate-700 mt-0.5">${t.memo || '거래 내역'}</p></div>
+                    <div key=${t.id} onClick=${()=>{setEditingTransaction(t); setEntryRows({date:t.date, debits:t.debits, credits:t.credits, vendor:t.vendor||'', memo:t.memo}); setIsEntryModalOpen(true);}} className="p-3.5 bg-white border rounded-xl flex justify-between cursor-pointer hover:border-indigo-500 transition-all shadow-sm active:bg-indigo-50">
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase">${t.date}</p>
+                        <div className="font-bold text-xs text-slate-700 mt-0.5 flex items-center gap-1.5">
+                          ${t.vendor && html`<span className="bg-slate-100 text-slate-600 text-[9px] px-1.5 py-0.5 rounded border border-slate-200 font-bold shrink-0">${t.vendor}</span>`}
+                          <span>${t.memo || '거래 내역'}</span>
+                        </div>
+                      </div>
                       <div className="text-right flex flex-col justify-center"><div className="font-mono font-black text-slate-700 text-xs sm:text-base">${(t.debits.reduce((s,d)=>s+d.amount, 0)).toLocaleString()}원</div></div>
                     </div>
                   `)}
@@ -2280,7 +2326,16 @@ const App = () => {
               </div>
             </div>
             <div className="bg-slate-50 p-3 sm:p-4 rounded-2xl border flex flex-col gap-3 shadow-inner">
-              <input type="text" className="w-full bg-white p-2.5 rounded-xl border border-slate-200 outline-none font-bold placeholder:text-slate-300 text-slate-700 text-xs sm:text-base" placeholder="거래 메모를 입력하세요 (예: 식비 결제)" value=${entryRows.memo} onChange=${(e) => setEntryRows({...entryRows, memo: e.target.value})} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1 ml-1">거래처 (Counterparty)</label>
+                  <input type="text" className="w-full bg-white p-2.5 rounded-xl border border-slate-200 outline-none font-bold placeholder:text-slate-300 text-slate-700 text-xs sm:text-sm" placeholder="거래처 입력 (예: 스타벅스, 쿠팡)" value=${entryRows.vendor || ''} onChange=${(e) => setEntryRows({...entryRows, vendor: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-black text-slate-400 uppercase mb-1 ml-1">거래 내용 (Memo)</label>
+                  <input type="text" className="w-full bg-white p-2.5 rounded-xl border border-slate-200 outline-none font-bold placeholder:text-slate-300 text-slate-700 text-xs sm:text-sm" placeholder="거래 메모를 입력하세요 (예: 식비 결제)" value=${entryRows.memo || ''} onChange=${(e) => setEntryRows({...entryRows, memo: e.target.value})} />
+                </div>
+              </div>
               <div className="flex items-center justify-between gap-4">
                 <span className=${`px-4 py-2 rounded-full text-[10px] font-black uppercase shadow-sm ${totalDebitSum === totalCreditSum && totalDebitSum > 0 ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
                   ${totalDebitSum === totalCreditSum && totalDebitSum > 0 

@@ -11,7 +11,7 @@ function getSheet(name) {
   if (!sheet) {
     sheet = ss.insertSheet(name);
     if (name === 'Transactions') {
-      sheet.appendRow(['id', 'date', 'debits', 'credits', 'memo']);
+      sheet.appendRow(['id', 'date', 'debits', 'credits', 'memo', 'vendor']);
     } else if (name === 'Settings') {
       sheet.appendRow(['key', 'value']);
     } else if (name === 'Budgets') {
@@ -52,7 +52,8 @@ function getAllData() {
           date: transRaw[i][1] instanceof Date ? Utilities.formatDate(transRaw[i][1], Session.getScriptTimeZone(), 'yyyy-MM-dd') : transRaw[i][1],
           debits: JSON.parse(transRaw[i][2]),
           credits: JSON.parse(transRaw[i][3]),
-          memo: transRaw[i][4]
+          memo: transRaw[i][4],
+          vendor: transRaw[i][5] || ''
         });
       } catch (e) { console.error("Data parse error", e); }
     }
@@ -85,11 +86,12 @@ function saveTransaction(tx) {
       tx.date,
       JSON.stringify(tx.debits),
       JSON.stringify(tx.credits),
-      tx.memo
+      tx.memo,
+      tx.vendor || ''
     ];
     
     if (rowIndex > -1) {
-      sheet.getRange(rowIndex, 1, 1, 5).setValues([rowData]);
+      sheet.getRange(rowIndex, 1, 1, 6).setValues([rowData]);
     } else {
       sheet.appendRow(rowData);
     }
@@ -147,21 +149,36 @@ function saveBudget(month, budgetData) {
     lock.waitLock(10000);
     const sheet = getSheet('Budgets');
     const data = sheet.getDataRange().getValues();
-    let rowIndex = -1;
+    const targetMonthStr = String(month).trim();
+    const matchingRows = [];
+    
     for (let i = 1; i < data.length; i++) {
-      if (String(data[i][0]) === String(month)) {
-        rowIndex = i + 1;
-        break;
+      let mVal = data[i][0];
+      let mStr = '';
+      if (mVal instanceof Date) {
+        mStr = Utilities.formatDate(mVal, Session.getScriptTimeZone(), 'yyyy-MM');
+      } else {
+        mStr = String(mVal).trim();
+      }
+      if (mStr === targetMonthStr) {
+        matchingRows.push(i + 1);
       }
     }
-    const rowData = [month, JSON.stringify(budgetData)];
-    if (rowIndex > -1) {
-      sheet.getRange(rowIndex, 1, 1, 2).setValues([rowData]);
+    
+    const rowData = [targetMonthStr, JSON.stringify(budgetData)];
+    
+    if (matchingRows.length > 0) {
+      const firstRow = matchingRows[0];
+      sheet.getRange(firstRow, 1, 1, 2).setValues([rowData]);
+      for (let j = matchingRows.length - 1; j > 0; j--) {
+        sheet.deleteRow(matchingRows[j]);
+      }
     } else {
       sheet.appendRow(rowData);
     }
     return true;
   } catch (e) {
+    console.error("saveBudget error:", e);
     return false;
   } finally {
     lock.releaseLock();
@@ -176,24 +193,19 @@ function ensureBudgets() {
   if (rawData.length > 1) {
     for (let i = 1; i < rawData.length; i++) {
       try {
-        budgets[rawData[i][0]] = JSON.parse(rawData[i][1]);
+        let mKey = rawData[i][0];
+        if (mKey instanceof Date) {
+          mKey = Utilities.formatDate(mKey, Session.getScriptTimeZone(), 'yyyy-MM');
+        } else {
+          mKey = String(mKey).trim();
+        }
+        if (mKey && rawData[i][1]) {
+          budgets[mKey] = JSON.parse(rawData[i][1]);
+        }
       } catch (e) {
         console.error("Budget parse error", e);
       }
     }
-  }
-  
-  const now = new Date();
-  const currentMonthStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM');
-  
-  if (!budgets[currentMonthStr]) {
-    const keys = Object.keys(budgets).sort();
-    let latestBudget = {};
-    if (keys.length > 0) {
-      latestBudget = budgets[keys[keys.length - 1]];
-    }
-    saveBudget(currentMonthStr, latestBudget);
-    budgets[currentMonthStr] = latestBudget;
   }
   
   return budgets;
