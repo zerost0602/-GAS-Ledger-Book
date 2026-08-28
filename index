@@ -186,23 +186,23 @@ const useAccounting = () => {
     const allAccs = [...accs.assets, ...accs.liabilities, ...accs.revenue, ...accs.expenses];
     
     const resolveId = (item) => {
-      if (item.accountId) return item.accountId;
+      if (item.accountId) return String(item.accountId);
       if (item.account === '결산(임시)') return 'closing_temp';
-      const found = allAccs.find(a => a.name === item.account);
-      return found ? found.id : String(item.account);
+      const found = allAccs.find(a => a.name === item.account || String(a.id) === String(item.account));
+      return found ? String(found.id) : String(item.account || '');
     };
 
     return {
       initialSetup: {
-        debits: (rawData.initialSetup?.debits || []).map(d => ({ accountId: resolveId(d), amount: d.amount, tag: d.tag || '' })),
-        credits: (rawData.initialSetup?.credits || []).map(c => ({ accountId: resolveId(c), amount: c.amount, tag: c.tag || '' }))
+        debits: (rawData.initialSetup?.debits || []).map(d => ({ accountId: resolveId(d), amount: Number(d.amount || 0), tag: d.tag || '' })),
+        credits: (rawData.initialSetup?.credits || []).map(c => ({ accountId: resolveId(c), amount: Number(c.amount || 0), tag: c.tag || '' }))
       },
       accounts: accs,
       transactions: (rawData.transactions || []).map(tx => ({
         ...tx,
         vendor: tx.vendor || '',
-        debits: tx.debits.map(d => ({ accountId: resolveId(d), amount: d.amount, tag: d.tag || '' })),
-        credits: tx.credits.map(c => ({ accountId: resolveId(c), amount: c.amount, tag: c.tag || '' }))
+        debits: (tx.debits || []).map(d => ({ accountId: resolveId(d), amount: Number(d.amount || 0), tag: d.tag || '' })),
+        credits: (tx.credits || []).map(c => ({ accountId: resolveId(c), amount: Number(c.amount || 0), tag: c.tag || '' }))
       })),
       budgets: rawData.budgets || {}
     };
@@ -336,9 +336,10 @@ const useAccounting = () => {
   useEffect(() => { loadData(); }, [loadData]);
 
   const getAccountById = useCallback((id) => {
-    if (id === 'closing_temp') return { id: 'closing_temp', name: '결산(임시)' };
+    if (!id) return { id: '', name: '미선택', subtype: 'variable' };
+    if (id === 'closing_temp') return { id: 'closing_temp', name: '결산(임시)', subtype: 'fixed' };
     const found = flatAccounts.find(a => String(a.id) === String(id));
-    return found || { id, name: id }; 
+    return found || { id: String(id), name: `[미분류/삭제] ${id}`, subtype: 'variable', isUnknown: true }; 
   }, [flatAccounts]);
 
   const runGasCommand = (cmd, ...args) => {
@@ -1466,8 +1467,36 @@ const App = () => {
     return revBal - expBal;
   }, [accountBalances, accounts]);
 
-  const totalAssets = accounts.assets.reduce((sum, acc) => sum + (accountBalances[acc.id] || 0), 0);
-  const totalLiabilitiesOnly = accounts.liabilities.filter(a => a.name !== '이익잉여금').reduce((sum, acc) => sum + Math.abs(accountBalances[acc.id] || 0), 0);
+  const registeredAccountIds = useMemo(() => new Set([...flatAccounts.map(a => String(a.id)), 'closing_temp']), [flatAccounts]);
+
+  const orphanAccountBalances = useMemo(() => {
+    const list = [];
+    Object.keys(accountBalances).forEach(id => {
+      if (id && !registeredAccountIds.has(String(id))) {
+        const bal = accountBalances[id] || 0;
+        if (bal !== 0) {
+          list.push({ id: String(id), balance: bal });
+        }
+      }
+    });
+    return list;
+  }, [accountBalances, registeredAccountIds]);
+
+  const orphanAssetsTotal = useMemo(() => {
+    return orphanAccountBalances.filter(o => o.balance > 0).reduce((sum, o) => sum + o.balance, 0);
+  }, [orphanAccountBalances]);
+
+  const orphanLiabilitiesTotal = useMemo(() => {
+    return orphanAccountBalances.filter(o => o.balance < 0).reduce((sum, o) => sum + Math.abs(o.balance), 0);
+  }, [orphanAccountBalances]);
+
+  const totalAssets = useMemo(() => {
+    return accounts.assets.reduce((sum, acc) => sum + (accountBalances[acc.id] || 0), 0) + orphanAssetsTotal;
+  }, [accounts.assets, accountBalances, orphanAssetsTotal]);
+
+  const totalLiabilitiesOnly = useMemo(() => {
+    return accounts.liabilities.filter(a => a.name !== '이익잉여금').reduce((sum, acc) => sum + Math.abs(accountBalances[acc.id] || 0), 0) + orphanLiabilitiesTotal;
+  }, [accounts.liabilities, accountBalances, orphanLiabilitiesTotal]);
   
   const retainedEarningsAcc = flatAccounts.find(a => a.name === '이익잉여금');
   const retainedEarningsId = retainedEarningsAcc ? retainedEarningsAcc.id : 'e1';
@@ -1475,6 +1504,53 @@ const App = () => {
   const retainedEarningsRow = useMemo(() => (initialSetup.credits || []).find(c => String(c.accountId) === String(retainedEarningsId)), [initialSetup.credits, retainedEarningsId]);
   const retainedEarningsAmount = retainedEarningsRow ? retainedEarningsRow.amount : 0;
   const currentEquity = calculatedInitialCapital + (accountBalances[retainedEarningsId] < 0 ? Math.abs(accountBalances[retainedEarningsId]) : -accountBalances[retainedEarningsId]) + unsettledNetIncome;
+
+  const [isLoadingReassign, setIsLoadingReassign] = useState(false);
+  const [selectedOrphanForReassign, setSelectedOrphanForReassign] = useState(null);
+
+  const handleReassignOrphanAccount = async (oldId, targetAccountId) => {
+    if (!oldId || !targetAccountId) return;
+    setIsLoadingReassign(true);
+    try {
+      const newDebits = (initialSetup.debits || []).map(d => String(d.accountId) === String(oldId) ? { ...d, accountId: targetAccountId } : d);
+      const newCredits = (initialSetup.credits || []).map(c => String(c.accountId) === String(oldId) ? { ...c, accountId: targetAccountId } : c);
+      const newInitialSetup = { debits: newDebits, credits: newCredits };
+
+      const updatedTxs = [];
+      const newTransactions = transactions.map(tx => {
+        let changed = false;
+        const debits = tx.debits.map(d => {
+          if (String(d.accountId) === String(oldId)) { changed = true; return { ...d, accountId: targetAccountId }; }
+          return d;
+        });
+        const credits = tx.credits.map(c => {
+          if (String(c.accountId) === String(oldId)) { changed = true; return { ...c, accountId: targetAccountId }; }
+          return c;
+        });
+        const updated = { ...tx, debits, credits };
+        if (changed) updatedTxs.push(updated);
+        return updated;
+      });
+
+      setData(prev => ({
+        ...prev,
+        initialSetup: newInitialSetup,
+        transactions: newTransactions
+      }));
+
+      await saveSettingsData(newInitialSetup, accounts);
+      for (const tx of updatedTxs) {
+        await saveTransaction(tx);
+      }
+
+      setSelectedOrphanForReassign(null);
+      setStatusMessage({ type: 'success', text: `[${oldId}] 관련 거래 ${updatedTxs.length}건을 [${getAccountById(targetAccountId).name}] 계정으로 정상 이관했습니다.` });
+    } catch (err) {
+      alert('이관 중 오류 발생: ' + err);
+    } finally {
+      setIsLoadingReassign(false);
+    }
+  };
 
   const totalDebitSum = useMemo(() => (entryRows.debits || []).reduce((s, r) => s + Number(r.amount || 0), 0), [entryRows.debits]);
   const totalCreditSum = useMemo(() => (entryRows.credits || []).reduce((s, r) => s + Number(r.amount || 0), 0), [entryRows.credits]);
@@ -1504,8 +1580,19 @@ const App = () => {
   };
 
   const handleDeleteAccount = (category, id) => {
+    const targetAcc = getAccountById(id);
+    const usedCount = transactions.filter(t => 
+      (t.debits || []).some(d => String(d.accountId) === String(id)) || 
+      (t.credits || []).some(c => String(c.accountId) === String(id))
+    ).length;
+
+    const message = usedCount > 0 
+      ? `'${targetAcc.name}' 계정과목을 사용하는 거래가 ${usedCount}건 존재합니다.\n삭제하더라도 기존 거래는 '미분류 계정'으로 안전하게 집계되어 차대 균형이 유지됩니다.\n정말 삭제하시겠습니까?`
+      : `'${targetAcc.name}' 계정과목을 삭제하시겠습니까?`;
+
     setConfirmDialog({
-      title: '삭제 확인', message: '해당 계정과목을 삭제하시겠습니까?',
+      title: '계정과목 삭제 확인',
+      message: message,
       onConfirm: () => {
         setData(prev => ({ ...prev, accounts: { ...prev.accounts, [category]: prev.accounts[category].filter(a => String(a.id) !== String(id)) } }));
         setIsDirty(true); setConfirmDialog(null);
@@ -1754,20 +1841,39 @@ const App = () => {
                 <h3 className="text-sm sm:text-xl font-black text-indigo-600 border-b-2 border-indigo-500 pb-2 mb-4 sm:mb-6 uppercase tracking-widest text-center">Assets</h3>
                 <div className="space-y-3 sm:space-y-4 min-h-[100px] sm:min-h-[250px]">
                   ${accounts.assets.filter(acc => (accountBalances[acc.id] || 0) !== 0).map(acc => {
+                    const totalAmount = accountBalances[acc.id] || 0;
                     const tagData = accountBalancesWithTags[acc.id]?.tags || {};
                     const sortedTags = Object.keys(tagData).map(tag => ({ tag, amount: tagData[tag] })).filter(t => t.amount !== 0);
+                    const taggedSum = sortedTags.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+                    const untaggedAmount = totalAmount - taggedSum;
                     return html`
                     <div key=${acc.id} className="flex flex-col py-2 border-b border-transparent hover:bg-slate-50/50 px-1 rounded-xl transition-all">
                       <div className="flex justify-between items-center">
                         <span className="text-xs sm:text-base text-slate-600 font-medium">${acc.name}</span>
-                        <span className="font-mono font-bold text-sm sm:text-lg">${(accountBalances[acc.id] || 0).toLocaleString()}원</span>
+                        <span className="font-mono font-bold text-sm sm:text-lg">${totalAmount.toLocaleString()}원</span>
                       </div>
                       ${sortedTags.map(t => React.createElement('div', { key: t.tag, className: "flex justify-between items-center mt-1 pl-3" },
                         React.createElement('span', { className: "text-[10px] text-slate-500 font-medium" }, "ㄴ " + t.tag),
                         React.createElement('span', { className: "font-mono text-[10px] sm:text-xs font-semibold text-slate-500" }, Number(t.amount || 0).toLocaleString() + "원")
                       ))}
+                      ${sortedTags.length > 0 && untaggedAmount !== 0 && React.createElement('div', { key: 'untagged', className: "flex justify-between items-center mt-1 pl-3" },
+                        React.createElement('span', { className: "text-[10px] text-slate-400 font-medium" }, "ㄴ 그 외"),
+                        React.createElement('span', { className: "font-mono text-[10px] sm:text-xs font-semibold text-slate-400" }, Number(untaggedAmount).toLocaleString() + "원")
+                      )}
                     </div>
                   `})}
+                  ${orphanAccountBalances.filter(o => o.balance > 0).map(o => html`
+                    <div key=${o.id} className="flex flex-col py-2 border border-amber-200 bg-amber-50/60 p-2.5 rounded-xl transition-all">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs sm:text-sm text-amber-800 font-bold flex items-center gap-1.5">
+                          <i data-lucide="alert-triangle" className="w-3.5 h-3.5 text-amber-500 shrink-0"></i>
+                          <span>[미분류/삭제] ${o.id}</span>
+                        </span>
+                        <span className="font-mono font-bold text-sm sm:text-base text-amber-700">${o.balance.toLocaleString()}원</span>
+                      </div>
+                      <span className="text-[10px] text-amber-600 font-medium mt-1">설정 > 계정과목에서 정상 계정으로 이관하세요</span>
+                    </div>
+                  `)}
                 </div>
                 <div className="mt-6 sm:mt-8 pt-4 border-t-2 border-slate-50 flex justify-between items-center font-black"><span className="text-xs sm:text-lg uppercase">Total Assets</span><span className="font-mono font-black text-lg sm:text-2xl text-indigo-600">${totalAssets.toLocaleString()}원</span></div>
               </div>
@@ -1776,20 +1882,39 @@ const App = () => {
                   <h3 className="text-sm sm:text-xl font-black text-red-500 border-b-2 border-red-500 pb-2 mb-4 sm:mb-6 uppercase tracking-widest text-center">Liabilities</h3>
                   <div className="space-y-3 sm:space-y-4 mb-4">
                     ${accounts.liabilities.filter(a => a.name !== '이익잉여금' && (accountBalances[a.id] || 0) !== 0).map(acc => {
+                      const totalAmount = Math.abs(accountBalances[acc.id] || 0);
                       const tagData = accountBalancesWithTags[acc.id]?.tags || {};
                       const sortedTags = Object.keys(tagData).map(tag => ({ tag, amount: tagData[tag] })).filter(t => t.amount !== 0);
+                      const taggedSum = sortedTags.reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+                      const untaggedAmount = totalAmount - taggedSum;
                       return html`
                       <div key=${acc.id} className="flex flex-col py-2 border-b border-transparent hover:bg-slate-50/50 px-1 rounded-xl transition-all">
                         <div className="flex justify-between items-center">
                           <span className="text-xs sm:text-base text-slate-600 font-medium">${acc.name}</span>
-                          <span className="font-mono font-bold text-sm sm:text-lg">${Math.abs(accountBalances[acc.id] || 0).toLocaleString()}원</span>
+                          <span className="font-mono font-bold text-sm sm:text-lg">${totalAmount.toLocaleString()}원</span>
                         </div>
                         ${sortedTags.map(t => React.createElement('div', { key: t.tag, className: "flex justify-between items-center mt-1 pl-3" },
                           React.createElement('span', { className: "text-[10px] text-slate-500 font-medium" }, "ㄴ " + t.tag),
                           React.createElement('span', { className: "font-mono text-[10px] sm:text-xs font-semibold text-slate-500" }, Number(Math.abs(t.amount) || 0).toLocaleString() + "원")
                         ))}
+                        ${sortedTags.length > 0 && untaggedAmount !== 0 && React.createElement('div', { key: 'untagged', className: "flex justify-between items-center mt-1 pl-3" },
+                          React.createElement('span', { className: "text-[10px] text-slate-400 font-medium" }, "ㄴ 그 외"),
+                          React.createElement('span', { className: "font-mono text-[10px] sm:text-xs font-semibold text-slate-400" }, Number(untaggedAmount).toLocaleString() + "원")
+                        )}
                       </div>
                     `})}
+                    ${orphanAccountBalances.filter(o => o.balance < 0).map(o => html`
+                      <div key=${o.id} className="flex flex-col py-2 border border-amber-200 bg-amber-50/60 p-2.5 rounded-xl transition-all">
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs sm:text-sm text-amber-800 font-bold flex items-center gap-1.5">
+                            <i data-lucide="alert-triangle" className="w-3.5 h-3.5 text-amber-500 shrink-0"></i>
+                            <span>[미분류/삭제] ${o.id}</span>
+                          </span>
+                          <span className="font-mono font-bold text-sm sm:text-base text-amber-700">${Math.abs(o.balance).toLocaleString()}원</span>
+                        </div>
+                        <span className="text-[10px] text-amber-600 font-medium mt-1">설정 > 계정과목에서 정상 계정으로 이관하세요</span>
+                      </div>
+                    `)}
                   </div>
                   <div className="flex justify-between items-center border-t border-dashed border-slate-200 pt-2 mb-6 sm:mb-8 font-bold text-slate-700">
                     <span className="text-xs sm:text-sm uppercase text-slate-500">Total Liabilities</span>
@@ -1822,7 +1947,10 @@ const App = () => {
                       <div className="flex justify-between text-[10px] sm:text-xs font-black text-slate-400 uppercase mb-3 border-b pb-1"><span>${group.label}</span><span>${group.subtotal.toLocaleString()}원</span></div>
                       <div className="space-y-1">
                         ${group.accounts.map(a => {
+                          const totalAmount = Math.abs(a.amount || 0);
                           const sortedTags = Object.keys(a.tags || {}).map(tag => ({ tag, amount: a.tags[tag] })).filter(t => t.amount !== 0);
+                          const taggedSum = sortedTags.reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+                          const untaggedAmount = totalAmount - taggedSum;
                           return html`
                           <div key=${a.name} className="flex flex-col py-1">
                             <div className="flex justify-between text-[11px] sm:text-sm py-0.5 italic">
@@ -1832,6 +1960,10 @@ const App = () => {
                               React.createElement('span', { className: "text-[10px] text-slate-500 font-medium italic" }, "ㄴ " + t.tag),
                               React.createElement('span', { className: "font-mono text-[10px] text-slate-500 italic" }, Math.abs(t.amount).toLocaleString() + "원")
                             ))}
+                            ${sortedTags.length > 0 && untaggedAmount !== 0 && React.createElement('div', { key: 'untagged', className: "flex justify-between items-center mt-0.5 pl-3" },
+                              React.createElement('span', { className: "text-[10px] text-slate-400 font-medium italic" }, "ㄴ 그 외"),
+                              React.createElement('span', { className: "font-mono text-[10px] text-slate-400 italic" }, Math.abs(untaggedAmount).toLocaleString() + "원")
+                            )}
                           </div>
                         `})}
                       </div>
@@ -1847,7 +1979,10 @@ const App = () => {
                       <div className="flex justify-between text-[10px] sm:text-xs font-black text-slate-400 uppercase mb-3 border-b pb-1"><span>${group.label}</span><span>${group.subtotal.toLocaleString()}원</span></div>
                       <div className="space-y-1">
                         ${group.accounts.map(a => {
+                          const totalAmount = Math.abs(a.amount || 0);
                           const sortedTags = Object.keys(a.tags || {}).map(tag => ({ tag, amount: a.tags[tag] })).filter(t => t.amount !== 0);
+                          const taggedSum = sortedTags.reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+                          const untaggedAmount = totalAmount - taggedSum;
                           return html`
                           <div key=${a.name} className="flex flex-col py-1">
                             <div className="flex justify-between text-[11px] sm:text-sm py-0.5 italic">
@@ -1857,6 +1992,10 @@ const App = () => {
                               React.createElement('span', { className: "text-[10px] text-slate-500 font-medium italic" }, "ㄴ " + t.tag),
                               React.createElement('span', { className: "font-mono text-[10px] text-slate-500 italic" }, Math.abs(t.amount).toLocaleString() + "원")
                             ))}
+                            ${sortedTags.length > 0 && untaggedAmount !== 0 && React.createElement('div', { key: 'untagged', className: "flex justify-between items-center mt-0.5 pl-3" },
+                              React.createElement('span', { className: "text-[10px] text-slate-400 font-medium italic" }, "ㄴ 그 외"),
+                              React.createElement('span', { className: "font-mono text-[10px] text-slate-400 italic" }, Math.abs(untaggedAmount).toLocaleString() + "원")
+                            )}
                           </div>
                         `})}
                       </div>
@@ -2056,7 +2195,51 @@ const App = () => {
               </div>
             `}
             ${settingsTab === 'accounts' && html`
-              <div className="space-y-10">
+              <div className="space-y-8">
+                ${orphanAccountBalances.length > 0 && html`
+                  <div className="p-4 bg-amber-50 border-2 border-amber-200 rounded-2xl animate-in fade-in">
+                    <div className="flex items-center gap-2 font-black text-amber-800 text-xs sm:text-sm mb-1.5">
+                      <i data-lucide="alert-triangle" className="w-4 h-4 text-amber-600 shrink-0"></i>
+                      <span>연결 끊긴(미분류) 계정과목이 감지되었습니다 (${orphanAccountBalances.length}개)</span>
+                    </div>
+                    <p className="text-[11px] text-amber-700 font-medium mb-3">
+                      과거에 삭제되었거나 이름/ID 불일치로 등록되지 않은 계정을 참조하는 거래 내역입니다. 차대 균형은 유지되고 있으며, 아래에서 원하는 정상 계정과목으로 일괄 이관(정리)할 수 있습니다.
+                    </p>
+                    <div className="space-y-2">
+                      ${orphanAccountBalances.map(o => html`
+                        <div key=${o.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-white rounded-xl border border-amber-200 shadow-sm">
+                          <div className="font-bold text-xs text-slate-800">
+                            <span className="text-amber-700 font-mono font-black">[${o.id}]</span>
+                            <span className="ml-2 font-mono text-slate-500">잔액: ${(o.balance || 0).toLocaleString()}원</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <select 
+                              id=${`reassign-target-${o.id}`}
+                              className="p-1.5 rounded-lg border border-slate-200 text-xs font-bold bg-slate-50 outline-none text-slate-700"
+                            >
+                              <option value="">이관할 대상 계정 선택...</option>
+                              ${flatAccounts.map(a => html`<option key=${a.id} value=${a.id}>${a.name} (${a.subtype === 'fixed' ? '고정' : '변동'})</option>`)}
+                            </select>
+                            <button
+                              disabled=${isLoadingReassign}
+                              onClick=${() => {
+                                const sel = document.getElementById(`reassign-target-${o.id}`);
+                                if (sel && sel.value) {
+                                  handleReassignOrphanAccount(o.id, sel.value);
+                                } else {
+                                  alert('이관할 대상 계정과목을 선택해주세요.');
+                                }
+                              }}
+                              className="bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-black px-3 py-1.5 rounded-lg transition shadow-sm active:scale-95 disabled:opacity-50"
+                            >
+                              ${isLoadingReassign ? '이관 중...' : '일괄 이관'}
+                            </button>
+                          </div>
+                        </div>
+                      `)}
+                    </div>
+                  </div>
+                `}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   ${['assets', 'liabilities'].map(cat => html`
                     <div key=${cat} className="bg-slate-50 p-4 rounded-2xl border shadow-inner h-fit text-slate-800">
